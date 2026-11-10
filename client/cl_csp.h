@@ -21,7 +21,8 @@
 //
 void    CL_CSP_ValueChanged (struct cvar_s *self, char *oldValue, char *newValue);          // Called when csp_enable changes
 void    CL_CSP_ParseFrameNotify (void);                                                     // Called at top of CL_ParseFrame
-void    CL_CSP_UpdateRTT (float rtt_ms);                                                    // Feed RTT sample from cl_scrn.c
+void    CL_CSP_UpdateRTT (float rtt_ms);                                                    // Feed RTT sample (internal EMA update)
+void    CL_CSP_SampleRTT (void);                                                             // Decoupled RTT sampling (Req 3)
 void    CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3_t out_angles);
 qboolean CL_CSP_ShouldRenderGhost (centity_t *cent, int ent_num);
 

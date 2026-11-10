@@ -100,6 +100,21 @@ static csp_entity_state_t csp_entities[CSP_MAX_ENTITIES];
 static float csp_ack_rtt_ms = 0.0f;       // smoothed RTT estimate in ms
 static qboolean csp_has_rtt = false;     // have we received an RTT sample
 
+//
+// RTT sampling metadata (Req 3) — raw and smoothed kept separate.
+//
+typedef enum {
+	CSP_RTT_SOURCE_OVERRIDE = 0,  // csp_latency_ms > 0 (user override)
+	CSP_RTT_SOURCE_MEASURED,      // from acknowledged-command RTT
+	CSP_RTT_SOURCE_FALLBACK       // 150 ms fixed fallback
+} csp_rtt_source_t;
+
+static int   csp_last_acked_seq = -1;    // last ack sequence we sampled (dedupe)
+static float csp_raw_rtt_ms = 0.0f;      // last raw RTT sample (unsmoothed)
+static int   csp_rtt_sample_time = 0;    // cls.realtime when last sample was taken
+static int   csp_rtt_acked_seq = 0;      // ack sequence of last sample
+static csp_rtt_source_t csp_rtt_source = CSP_RTT_SOURCE_FALLBACK;
+
 // Extern declarations for client state
 extern client_state_t cl;
 extern client_static_t cls;
@@ -142,6 +157,11 @@ void CL_CSP_ClearState (void)
 
 	csp_ack_rtt_ms = 0.0f;
 	csp_has_rtt = false;
+	csp_last_acked_seq = -1;
+	csp_raw_rtt_ms = 0.0f;
+	csp_rtt_sample_time = 0;
+	csp_rtt_acked_seq = 0;
+	csp_rtt_source = CSP_RTT_SOURCE_FALLBACK;
 
 	if (csp_debug_fp)
 	{
@@ -260,9 +280,53 @@ void CL_CSP_UpdateRTT (float rtt_ms)
 	}
 }
 
-// ====================================================================
-// Snapshot Timestamp Capture
-// ====================================================================
+/*
+====================
+CL_CSP_SampleRTT
+
+Decoupled RTT sampling (Req 3).
+Called unconditionally from cl_main.c after CL_ParseServerMessage,
+independent of netgraph visualization state.
+
+Samples RTT only when a NEW acknowledgement is observed (deduped by
+ack sequence number). Keeps raw and smoothed RTT separate.
+====================
+*/
+void CL_CSP_SampleRTT (void)
+{
+	// If user override is active, no sampling needed
+	if (csp_latency_ms && csp_latency_ms->value > 0.0f)
+	{
+		csp_rtt_source = CSP_RTT_SOURCE_OVERRIDE;
+		return;
+	}
+
+	// Get current acknowledged sequence
+	int ack_seq = cls.netchan.incoming_acknowledged;
+
+	// Dedupe: only sample when a new ack is observed
+	if (ack_seq == csp_last_acked_seq)
+		return;
+
+	csp_last_acked_seq = ack_seq;
+
+	// Compute raw RTT: time since the acknowledged command was sent
+	int in = ack_seq & (CMD_BACKUP - 1);
+	int ping = cls.realtime - cl.cmd_time[in];
+
+	// Sanity check: ping should be positive and reasonable
+	if (ping < 0 || ping > 5000)
+		return;
+
+	// Store raw sample metadata
+	csp_raw_rtt_ms = (float)ping;
+	csp_rtt_sample_time = cls.realtime;
+	csp_rtt_acked_seq = ack_seq;
+	csp_rtt_source = CSP_RTT_SOURCE_MEASURED;
+
+	// Update smoothed EMA (same logic as before)
+	CL_CSP_UpdateRTT ((float)ping);
+}
 
 /*
 ====================
@@ -522,11 +586,18 @@ cl.frametime (roughly 100ms fixed), NOT actual network latency.
 static float CL_CSP_GetRTTMs (void)
 {
 	if (csp_latency_ms->intvalue > 0)
+	{
+		csp_rtt_source = CSP_RTT_SOURCE_OVERRIDE;
 		return (float)csp_latency_ms->intvalue;
+	}
 
 	if (csp_has_rtt && (csp_ack_rtt_ms > 0.0f))
+	{
+		csp_rtt_source = CSP_RTT_SOURCE_MEASURED;
 		return csp_ack_rtt_ms;
+	}
 
+	csp_rtt_source = CSP_RTT_SOURCE_FALLBACK;
 	return 150.0f;  // fixed fallback for unconnected/early-game
 }
 

@@ -2109,18 +2109,23 @@ void CL_ReadPackets (void)
 
 		if (CL_ParseServerMessage ())
 		{
-			CL_AddNetgraph ();
+		// RTT sampling is decoupled from netgraph visualization (Req 3).
+		// Called unconditionally after server message parse so that
+		// netgraph settings cannot disable RTT updates.
+		CL_CSP_SampleRTT ();
 
-			if (scr_sizegraph->intvalue)
-				CL_AddSizegraph ();
-		}
+		CL_AddNetgraph ();
 
-		//
-		// we don't know if it is ok to save a demo message until
-		// after we have parsed the frame
-		//
-		if (cls.demorecording && !cls.demowaiting && cls.serverProtocol == PROTOCOL_ORIGINAL)
-			CL_WriteDemoMessageFull ();
+		if (scr_sizegraph->intvalue)
+			CL_AddSizegraph ();
+	}
+
+	//
+	// we don't know if it is ok to save a demo message until
+	// after we have parsed the frame
+	//
+	if (cls.demorecording && !cls.demowaiting && cls.serverProtocol == PROTOCOL_ORIGINAL)
+		CL_WriteDemoMessageFull ();
 	}
 
 	//

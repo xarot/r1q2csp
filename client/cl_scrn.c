@@ -33,7 +33,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
   */
 
 #include "client.h"
-#include "cl_csp.h"
 
 float		scr_con_current;	// aproaches scr_conlines at scr_conspeed
 float		scr_conlines;		// 0.0 to 1.0 lines of console to display
@@ -119,9 +118,6 @@ void CL_AddNetgraph (void)
 	// see what the latency was on this packet
 	in = cls.netchan.incoming_acknowledged & (CMD_BACKUP-1);
 	ping = cls.realtime - cl.cmd_time[in];
-
-	// CSP v2 Phase 1 — feed raw RTT measurement to tracker
-	CL_CSP_UpdateRTT ((float)ping);
 
 	ping /= 30;
 	if (ping > 30)
