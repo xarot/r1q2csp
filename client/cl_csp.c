@@ -239,6 +239,27 @@ static void CL_CSP_ResetSmoothing (csp_entity_state_t *st)
 	VectorClear (st->smooth_offset);
 	st->smooth_offset_time = 0;
 	st->smooth_active = false;
+	st->last_rendered_valid = false;
+	st->smooth_captured_for_frame = 0;
+}
+
+/*
+====================
+CL_CSP_SmoothChanged
+
+csp_smooth changed callback: when the cvar transitions (enable/disable or
+value change), reset smoothing state for all tracked entities so that a
+stale offset captured before the transition is never applied.
+====================
+*/
+void CL_CSP_SmoothChanged (cvar_t *self, char *oldValue, char *newValue)
+{
+	int i;
+	for (i = 0; i < CSP_MAX_ENTITIES; i++)
+	{
+		if (csp_entities[i].initialized)
+			CL_CSP_ResetSmoothing (&csp_entities[i]);
+	}
 }
 
 
@@ -394,6 +415,8 @@ void CL_CSP_ParseFrameNotify (void)
 					"velocity_x,velocity_y,velocity_z,"
 					"dt_ms,snapshot_age_ms,"
 					"rtt_ms,rtt_source,mult,horizon_bias,horizon_ms,"
+					"raw_rtt_ms,smoothed_rtt_ms,rtt_sample_time,rtt_sample_age_ms,acked_cmd_seq,"
+					"csp_latency_ms,csp_horizon_ms,csp_smooth,csp_smooth_tau,"
 					"raw_predicted_x,raw_predicted_y,raw_predicted_z,"
 					"has_velocity,reseeded,reseed_reason,snap_age_clamped,"
 					"prev_anim_frame,cur_anim_frame,"
@@ -452,6 +475,14 @@ void CL_CSP_ParseFrameNotify (void)
 // Velocity Update (Idempotent per snapshot)
 // ====================================================================
 
+// Forward declarations (defined later in this file)
+static float CL_CSP_GetRTTMs (void);
+static float CL_CSP_CalculateHorizon (csp_entity_state_t *st, qboolean *age_clamped);
+static void CL_CSP_LogSnapshot (
+	int ent_num, csp_entity_state_t *st,
+	float rtt_ms, float horizon_ms,
+	qboolean reseeded, const char *reseed_reason, qboolean age_clamped);
+
 /*
 ====================
 CL_CSP_UpdateEntityVelocity
@@ -470,6 +501,10 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 	csp_entity_state_t *st = &csp_entities[ent_num];
 	int dt;
 	float dx, dy, dz;
+	qboolean reseeded = false;
+	const char *reseed_reason = "";
+	qboolean age_clamped = false;
+	float horizon_ms = 0.0f;
 
 	// Guard: don't update if frame data is not ready
 	if (cl.frame.servertime == 0 && cl.frame.serverframe == 0)
@@ -479,13 +514,45 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 	if (st->cur_serverframe == cl.frame.serverframe)
 		return;  // already updated this frame
 
+	// Section B: Determine actual snapshot membership from cent->serverframe.
+	// cent->serverframe is set by CL_ParseEntity when the entity appears in
+	// the delta stream. If it does not match the current frame, the entity
+	// was NOT present in this authoritative snapshot.
+	qboolean entity_present = (cent->serverframe == cl.frame.serverframe);
+
 	// Record snapshot continuity (Req 1): presence + drop counter deltas.
 	// These are recorded BEFORE the shift so prev_* reflects the prior
 	// snapshot's state.
 	st->prev_present = st->cur_present;
-	st->cur_present  = 1;
+	st->cur_present  = entity_present ? 1 : 0;
 	st->prev_dropped = st->cur_dropped;
 	st->cur_dropped  = cls.netchan.dropped;
+
+	// Section B: Entity-absent reseed — moved here from PredictEntity so it
+	// runs BEFORE the stored state advances. If the entity was not in the
+	// current snapshot, clear stale velocity and reseed.
+	if (st->initialized && !entity_present)
+	{
+		st->has_velocity = false;
+		VectorClear (st->velocity);
+		CL_CSP_ResetSmoothing (st);
+		st->last_reset_reason = CSP_RESET_ENTITY_ABSENT;
+		st->prev_servertime = st->cur_servertime;
+		st->prev_serverframe = st->cur_serverframe;
+		VectorCopy (st->cur_origin, st->prev_origin);
+		st->cur_serverframe = cl.frame.serverframe;
+		st->cur_receive_ms = csp_snapshot_receive_ms;
+		reseeded = true;
+		reseed_reason = "entity_not_in_snapshot";
+
+		// Section C: Log snapshot state transition
+		horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
+		VectorCopy (st->cur_origin, st->raw_predicted);
+		if (csp_debug->intvalue > 0)
+			CL_CSP_LogSnapshot (ent_num, st, CL_CSP_GetRTTMs(), horizon_ms,
+				reseeded, reseed_reason, age_clamped);
+		return;
+	}
 
 	// Shift current -> prev for velocity calc (only if we have data)
 	if (st->initialized)
@@ -508,6 +575,13 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 		st->cur_receive_ms = csp_snapshot_receive_ms;
 		st->has_velocity = false;
 		VectorClear (st->velocity);
+
+		// Section C: Log first-sight snapshot
+		horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
+		VectorCopy (st->cur_origin, st->raw_predicted);
+		if (csp_debug->intvalue > 0)
+			CL_CSP_LogSnapshot (ent_num, st, CL_CSP_GetRTTMs(), horizon_ms,
+				false, "", age_clamped);
 		return;
 	}
 
@@ -526,6 +600,15 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 		st->cur_serverframe = cl.frame.serverframe;
 		VectorCopy (cent->current.origin, st->cur_origin);
 		st->seen_count++;
+		reseeded = true;
+		reseed_reason = "invalid_dt";
+
+		// Section C: Log reseed state
+		horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
+		VectorCopy (st->cur_origin, st->raw_predicted);
+		if (csp_debug->intvalue > 0)
+			CL_CSP_LogSnapshot (ent_num, st, CL_CSP_GetRTTMs(), horizon_ms,
+				reseeded, reseed_reason, age_clamped);
 		return;
 	}
 
@@ -544,6 +627,15 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 		st->cur_serverframe = cl.frame.serverframe;
 		VectorCopy (cent->current.origin, st->cur_origin);
 		st->seen_count++;
+		reseeded = true;
+		reseed_reason = "serverframe_skipped";
+
+		// Section C: Log reseed state
+		horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
+		VectorCopy (st->cur_origin, st->raw_predicted);
+		if (csp_debug->intvalue > 0)
+			CL_CSP_LogSnapshot (ent_num, st, CL_CSP_GetRTTMs(), horizon_ms,
+				reseeded, reseed_reason, age_clamped);
 		return;
 	}
 
@@ -574,6 +666,15 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 			st->cur_serverframe = cl.frame.serverframe;
 			VectorCopy (cent->current.origin, st->cur_origin);
 			st->seen_count++;
+			reseeded = true;
+			reseed_reason = "teleport_disp";
+
+			// Section C: Log reseed state
+			horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
+			VectorCopy (st->cur_origin, st->raw_predicted);
+			if (csp_debug->intvalue > 0)
+				CL_CSP_LogSnapshot (ent_num, st, CL_CSP_GetRTTMs(), horizon_ms,
+					reseeded, reseed_reason, age_clamped);
 			return;
 		}
 	}
@@ -612,6 +713,22 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 	st->cur_receive_ms = csp_snapshot_receive_ms;
 	st->seen_count++;
 	st->last_reset_reason = CSP_RESET_NONE;  // successful update
+
+	// Section C: Log successful snapshot update
+	horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
+	if (st->has_velocity)
+	{
+		st->raw_predicted[0] = st->cur_origin[0] + st->velocity[0] * (horizon_ms / 1000.0f);
+		st->raw_predicted[1] = st->cur_origin[1] + st->velocity[1] * (horizon_ms / 1000.0f);
+		st->raw_predicted[2] = st->cur_origin[2] + st->velocity[2] * (horizon_ms / 1000.0f);
+	}
+	else
+	{
+		VectorCopy (st->cur_origin, st->raw_predicted);
+	}
+	if (csp_debug->intvalue > 0)
+		CL_CSP_LogSnapshot (ent_num, st, CL_CSP_GetRTTMs(), horizon_ms,
+			reseeded, reseed_reason, age_clamped);
 }
 
 /*
@@ -807,6 +924,8 @@ static void CL_CSP_LogSnapshot (
 		"%.2f,%.2f,%.2f,"   // velocity
 		"%.1f,%.1f,"  // dt_ms, snapshot_age_ms
 		"%.1f,%s,%.2f,%.1f,%.1f,"  // rtt_ms, rtt_source, mult, horizon_bias, horizon_ms
+		"%.2f,%.2f,%d,%d,%d,"  // raw_rtt_ms, smoothed_rtt_ms, rtt_sample_time, rtt_sample_age_ms, acked_cmd_seq
+		"%.1f,%.1f,%.1f,%.1f,"  // csp_latency_ms, csp_horizon_ms, csp_smooth, csp_smooth_tau
 		"%.1f,%.1f,%.1f,"  // raw_predicted
 		"%d,%d,%s,%d,"  // has_velocity, reseeded, reseed_reason, age_clamped
 		"%d,%d,"        // prev_anim_frame, cur_anim_frame
@@ -831,6 +950,12 @@ static void CL_CSP_LogSnapshot (
 		rtt_ms, rtt_source_str,
 		csp_mult->value, csp_horizon_bias->value,
 		horizon_ms,
+		csp_raw_rtt_ms, csp_ack_rtt_ms,
+		csp_rtt_sample_time,
+		(int)(cls.realtime - csp_rtt_sample_time),
+		csp_rtt_acked_seq,
+		csp_latency_ms->value, csp_horizon_ms->value,
+		csp_smooth->value, csp_smooth_tau->value,
 		st->raw_predicted[0], st->raw_predicted[1], st->raw_predicted[2],
 		st->has_velocity ? 1 : 0,
 		reseeded ? 1 : 0,
@@ -984,24 +1109,12 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 
 	st = &csp_entities[ent_num];
 
-	// Check if entity was present in the current or previous server frame.
-	// If it was absent, reseed to clear stale velocity — the entity may have
-	// respawned or teleported while we had no snapshots.
-	if (st->initialized && st->cur_serverframe != cl.frame.serverframe - 1
-		&& st->cur_serverframe != cl.frame.serverframe)
-	{
-		st->has_velocity = false;
-		VectorClear (st->velocity);
-		CL_CSP_ResetSmoothing (st);
-		st->last_reset_reason = CSP_RESET_ENTITY_ABSENT;
-		st->prev_servertime = st->cur_servertime;
-		st->prev_serverframe = st->cur_serverframe;
-		VectorCopy (st->cur_origin, st->prev_origin);
-		reseeded = true;
-		reseed_reason = "entity_not_in_recent_frame";
-	}
-
-	// Update entity state and velocity (idempotent)
+	// Update entity state and velocity (idempotent).
+	// Section B: entity-absent reseed is now handled inside UpdateEntityVelocity
+	// BEFORE the stored state advances, using cent->serverframe for actual
+	// snapshot membership.
+	// Section C: snapshot logging is now handled inside UpdateEntityVelocity
+	// for every state transition (first-sight, reseed, invalid, successful).
 	CL_CSP_UpdateEntityVelocity (cent, ent_num);
 
 	// Check if velocity was cleared (reseed event)
@@ -1099,15 +1212,9 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 		out_angles[i] = LerpAngle (a2, a1, cl.lerpfrac);
 	}
 
-	// Snapshot logging (once per entity per authoritative snapshot, deduped)
-	if (csp_debug->intvalue > 0)
-	{
-		CL_CSP_LogSnapshot (
-			ent_num, st,
-			CL_CSP_GetRTTMs(), horizon_ms,
-			reseeded, reseed_reason, age_clamped
-		);
-	}
+	// Section C: Snapshot logging is now handled in CL_CSP_UpdateEntityVelocity
+	// for every state transition (first-sight, reseed, invalid, successful),
+	// independent of whether a ghost is rendered.
 }
 
 // ====================================================================

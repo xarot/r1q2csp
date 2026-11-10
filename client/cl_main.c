@@ -3682,6 +3682,7 @@ void CL_InitLocal (void)
 	csp_horizon_ms = Cvar_Get ("csp_horizon_ms", "0", 0);      // 0 = auto
 	csp_horizon_bias = Cvar_Get ("csp_horizon_bias", "0", 0);  // additional ms bias
 	csp_smooth = Cvar_Get ("csp_smooth", "0", 0);              // 0=off, 1=decaying smooth
+	csp_smooth->changed = CL_CSP_SmoothChanged;
 	csp_smooth_tau = Cvar_Get ("csp_smooth_tau", "80", 0);     // smoothing time constant ms
 	csp_debug = Cvar_Get ("csp_debug", "0", 0);               // 0=off, 1=console, 2=file
 	csp_debug_file = Cvar_Get ("csp_debug_file", "csp_debug.log", 0);  // log filename

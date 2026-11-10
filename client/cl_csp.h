@@ -20,6 +20,7 @@
 // Public API
 //
 void    CL_CSP_ValueChanged (struct cvar_s *self, char *oldValue, char *newValue);          // Called when csp_enable changes
+void    CL_CSP_SmoothChanged (struct cvar_s *self, char *oldValue, char *newValue);         // Called when csp_smooth changes
 void    CL_CSP_ParseFrameNotify (void);                                                     // Called at top of CL_ParseFrame
 void    CL_CSP_UpdateRTT (float rtt_ms);                                                    // Feed RTT sample (internal EMA update)
 void    CL_CSP_SampleRTT (void);                                                             // Decoupled RTT sampling (Req 3)
