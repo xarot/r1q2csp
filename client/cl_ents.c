@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_ents.c -- entity parsing and management
 
 #include "client.h"
+#include "cl_csp.h"
 
 
 extern	struct model_s	*cl_mod_powerscreen;
@@ -1280,6 +1281,9 @@ void CL_ParseFrame (int extrabits)
 	//cl.playerlerp = 0;
 	//Com_DPrintf ("FRAME @ playerlerp %g\n", cl.playerlerp);
 
+	// CSP v2 Phase 1 — record local snapshot receive timestamp
+	CL_CSP_ParseFrameNotify ();
+
 	//HACK: we steal last bits of this int for the offset
 	//if serverframe gets that high then the server has been on the same map
 	//for over 19 days... how often will this legitimately happen, and do we
@@ -1619,6 +1623,10 @@ static void CL_AddPacketEntities (const frame_t *frame)
 		renderfx = s1->renderfx;
 
 		regular = false;
+
+		// CSP: flag to skip generic linked model rendering in BOTH mode
+		// (s1 is const, so we can't set modelindex2 = 0)
+		qboolean csp_skip_linked_models = false;
 
 		// set frame
 		if (effects & EF_ANIM01)
@@ -2004,8 +2012,190 @@ lerp_time;*/
 
 		//Com_Printf ("%d %d:", s1->modelindex, s1->number);
 
-		// add to refresh list
-		V_AddEntity (&ent);
+		// CSP: Client-Side Prediction - render ghost entity for high-latency play
+		if (CL_CSP_ShouldRenderGhost (cent, s1->number))
+		{
+			vec3_t predicted_origin;
+			vec3_t predicted_angles;
+			vec3_t saved_origin;
+			vec3_t saved_angles;
+			int saved_frame;
+			int saved_oldframe;
+			float saved_backlerp;
+			int saved_skinnum;
+			float saved_alpha;
+			int saved_flags;
+			struct model_s *saved_model;
+			struct image_s *saved_skin;
+
+			// Predict future position based on velocity and latency
+			CL_CSP_PredictEntity (cent, s1->number, predicted_origin, predicted_angles);
+
+			if (csp_enable->intvalue == CSP_GHOST_ONLY)
+			{
+				// Ghost-only: render near-solid ghost with blue shell overlay
+				// Guard against NULL models during map precaching (e.g., openffa)
+				if (ent.model)
+				{
+					VectorCopy (predicted_origin, ent.origin);
+					VectorCopy (predicted_angles, ent.angles);
+
+					// Layer 1: near-solid ghost body (~90% like original player)
+					// Translucent so it's ghostly, original colors/skin preserved
+					ent.flags = RF_TRANSLUCENT;
+					ent.alpha = 0.90f;
+					// Prevent interpolation warping: anchor oldorigin to current position,
+					// disable backlerp so renderer doesn't lerp with stale data
+					ent.oldorigin[0] = ent.origin[0];
+					ent.oldorigin[1] = ent.origin[1];
+					ent.oldorigin[2] = ent.origin[2];
+					ent.backlerp = 0;
+					V_AddEntity (&ent);
+
+					// Layer 2: faint purple shell overlay for ghost identification
+					// Purple = RF_SHELL_RED|RF_SHELL_BLUE, not used by any stock item
+					// (Blue alone would confuse with quad damage)
+					ent.flags = RF_TRANSLUCENT | RF_SHELL_RED | RF_SHELL_BLUE;
+					ent.alpha = 0.20f;
+					V_AddEntity (&ent);
+				}
+				// Linked entities (weapon/hand) also at ghost position
+				if (s1->modelindex2)
+				{
+					if (s1->modelindex2 == 255)
+					{
+						ci = &cl.clientinfo[s1->skinnum & 0xff];
+						i = (s1->skinnum >> 8);
+						if (!cl_vwep->intvalue || i > MAX_CLIENTWEAPONMODELS - 1)
+							i = 0;
+						ent.model = ci->weaponmodel[i];
+						if (!ent.model)
+						{
+							if (i != 0)
+								ent.model = ci->weaponmodel[0];
+							if (!ent.model)
+								ent.model = cl.baseclientinfo.weaponmodel[0];
+						}
+						// Only add entity if we have a valid model —
+						// during map loading (e.g., openffa), weapon
+						// models may not be precached yet
+						if (ent.model)
+						{
+							ent.flags = 0;
+							V_AddEntity (&ent);
+							ent.flags = 0;
+							ent.alpha = 0;
+						}
+					}
+					else
+					{
+						ent.model = cl.model_draw[s1->modelindex2];
+						// Guard against NULL models during map precaching
+						if (ent.model)
+						{
+							ent.flags = 0;
+							V_AddEntity (&ent);
+						}
+						ent.flags = 0;
+						ent.alpha = 0;
+					}
+				}
+				// Prevent generic linked-model code below from rendering a second weapon
+				// at the server position, causing gun trailing in GHOST_ONLY mode
+				csp_skip_linked_models = true;
+			}
+			else
+			{
+				// Ghost + Both: render real body at server position, ghost at predicted.
+				// Linked models (weapons) are rendered at ghost predicted position only.
+				// Generic linked-model code below is skipped via csp_skip_linked_models.
+				V_AddEntity (&ent);
+
+				// Save real entity state
+				VectorCopy (ent.origin, saved_origin);
+				VectorCopy (ent.angles, saved_angles);
+				saved_frame = ent.frame;
+				saved_oldframe = ent.oldframe;
+				saved_backlerp = ent.backlerp;
+				saved_skinnum = ent.skinnum;
+				saved_alpha = ent.alpha;
+				saved_flags = ent.flags;
+				saved_model = ent.model;
+				saved_skin = ent.skin;
+
+				// Override with predicted position for ghost - near-solid same model
+				VectorCopy (predicted_origin, ent.origin);
+				VectorCopy (predicted_angles, ent.angles);
+
+				// Layer 1: near-solid ghost body (~90% like original player)
+				// Translucent so it's ghostly, original colors/skin preserved
+				ent.flags = RF_TRANSLUCENT;
+				ent.alpha = 0.90f;
+				ent.oldorigin[0] = ent.origin[0];
+				ent.oldorigin[1] = ent.origin[1];
+				ent.oldorigin[2] = ent.origin[2];
+				ent.backlerp = 0;
+				V_AddEntity (&ent);
+
+				// Layer 2: faint purple shell overlay for ghost identification
+				// Purple = RF_SHELL_RED|RF_SHELL_BLUE, not used by any stock item
+				// (Blue alone would confuse with quad damage)
+				ent.flags = RF_TRANSLUCENT | RF_SHELL_RED | RF_SHELL_BLUE;
+				ent.alpha = 0.20f;
+				V_AddEntity (&ent);
+
+				// Linked model (weapon/hand) at ghost predicted position
+				// Prevents gun trailing by anchoring weapon to ghost, not real entity
+				if (s1->modelindex2)
+				{
+					if (s1->modelindex2 == 255)
+					{
+						ci = &cl.clientinfo[s1->skinnum & 0xff];
+						i = (s1->skinnum >> 8);
+						if (!cl_vwep->intvalue || i > MAX_CLIENTWEAPONMODELS - 1)
+							i = 0;
+						ent.model = ci->weaponmodel[i];
+						if (!ent.model)
+						{
+							if (i != 0)
+								ent.model = ci->weaponmodel[0];
+							if (!ent.model)
+								ent.model = cl.baseclientinfo.weaponmodel[0];
+						}
+					}
+					else
+						ent.model = cl.model_draw[s1->modelindex2];
+
+					ent.flags = RF_TRANSLUCENT;
+					ent.alpha = 0.45f;
+					V_AddEntity (&ent);
+					ent.flags = 0;
+					ent.alpha = 0;
+				}
+
+				// Restore real entity state for linked models below
+				VectorCopy (saved_origin, ent.origin);
+				VectorCopy (saved_angles, ent.angles);
+				ent.frame = saved_frame;
+				ent.oldframe = saved_oldframe;
+				ent.backlerp = saved_backlerp;
+				ent.skinnum = saved_skinnum;
+				ent.alpha = saved_alpha;
+				ent.flags = saved_flags;
+				ent.model = saved_model;
+				ent.skin = saved_skin;
+
+				// Linked model (weapon/hand) already rendered at ghost's predicted
+				// position above. Skip generic linked-model code below so the server
+				// position doesn't get a duplicate weapon.
+				csp_skip_linked_models = true;
+			}
+		}
+		else
+		{
+			// add to refresh list
+			V_AddEntity (&ent);
+		}
 
 		// color shells generate a seperate entity for the main model
 		if (effects & EF_COLOR_SHELL)
@@ -2021,7 +2211,7 @@ lerp_time;*/
 		ent.alpha = 0;
 
 		// duplicate for linked models
-		if (s1->modelindex2)
+		if (s1->modelindex2 && !csp_skip_linked_models)
 		{
 			if (s1->modelindex2 == 255)
 			{	

@@ -156,6 +156,17 @@ cvar_t	*cl_updaterate;
 
 cvar_t	*cl_proxy;
 
+// Client-Side Prediction (CSP) - ghost prediction for high-latency play
+cvar_t *csp_enable;
+cvar_t *csp_latency_ms;
+cvar_t *csp_mult;
+cvar_t *csp_horizon_ms;       // fixed horizon override in ms (0 = auto)
+cvar_t *csp_horizon_bias;     // additional horizon bias in ms
+cvar_t *csp_smooth;           // 0=off, 1=enable decaying visual smoothing
+cvar_t *csp_smooth_tau;       // smoothing time constant in ms (default 80)
+cvar_t *csp_debug;            // 0=off, 1=console, 2=file (path in csp_debug_file)
+cvar_t *csp_debug_file;       // log file path for csp_debug 2
+
 #ifdef NO_SERVER
 cvar_t	*allow_download;
 cvar_t *allow_download_players;
@@ -1145,6 +1156,7 @@ void CL_ClearState (void)
 	S_StopAllSounds ();
 	CL_ClearEffects ();
 	CL_ClearTEnts ();
+	CL_CSP_ClearState ();
 
 // wipe the entire cl structure
 	memset (&cl, 0, sizeof(cl));
@@ -3657,6 +3669,19 @@ void CL_InitLocal (void)
 
 	cl_proxy = Cvar_Get ("cl_proxy", "", 0);
 
+	// CSP (Client-Side Prediction) - ghost prediction for high-latency play
+	csp_enable = Cvar_Get ("csp_enable", "1", 0);
+	csp_enable->changed = CL_CSP_ValueChanged;
+	csp_latency_ms = Cvar_Get ("csp_latency_ms", "0", 0);
+	csp_mult = Cvar_Get ("csp_mult", "1.0", 0);
+	csp_horizon_ms = Cvar_Get ("csp_horizon_ms", "0", 0);      // 0 = auto
+	csp_horizon_bias = Cvar_Get ("csp_horizon_bias", "0", 0);  // additional ms bias
+	csp_smooth = Cvar_Get ("csp_smooth", "0", 0);              // 0=off, 1=decaying smooth
+	csp_smooth_tau = Cvar_Get ("csp_smooth_tau", "80", 0);     // smoothing time constant ms
+	csp_debug = Cvar_Get ("csp_debug", "0", 0);               // 0=off, 1=console, 2=file
+	csp_debug_file = Cvar_Get ("csp_debug_file", "csp_debug.log", 0);  // log filename
+
+	//
 	//haxx
 	glVersion = Cvar_VariableString ("cl_version");
 	(Cvar_ForceSet ("cl_version", va(PRODUCTNAME " " VERSION "; %s", glVersion[0] ? glVersion : "unknown renderer" )))->changed = version_update;

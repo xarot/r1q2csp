@@ -75,6 +75,9 @@
     <ClCompile Include="client\cl_pred.c">
       <Filter>Source Files\client</Filter>
     </ClCompile>
+    <ClCompile Include="client\cl_csp.c">
+      <Filter>Source Files\client</Filter>
+    </ClCompile>
     <ClCompile Include="client\cl_scrn.c">
       <Filter>Source Files\client</Filter>
     </ClCompile>

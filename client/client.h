@@ -136,7 +136,7 @@ struct localent_s
 //yummmm splash gibs death blood
 #define MAX_LOCAL_ENTS 1024
 
-localent_t cl_localents[MAX_LOCAL_ENTS];
+extern localent_t cl_localents[MAX_LOCAL_ENTS];
 
 void Le_Reset (void);
 
@@ -812,6 +812,24 @@ void IN_Restart_f (void);
 // cl_pred.c
 //
 void CL_PredictMovement (void);
+
+//
+// cl_csp.c - Client-Side Prediction (ghost entities)
+//
+void CL_CSP_ValueChanged (struct cvar_s *self, char *oldValue, char *newValue);
+void CL_CSP_ClearState (void);
+void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3_t out_angles);
+
+// CSP cvar exports (declared in cl_main.c, used by cl_csp.c)
+extern cvar_t  *csp_enable;       // 0=off, 1=ghost+real, 2=ghost only
+extern cvar_t  *csp_latency_ms;   // prediction window in ms (0=auto)
+extern cvar_t  *csp_mult;         // prediction multiplier (1.0=railgun, 3.0=projectiles)
+extern cvar_t  *csp_horizon_ms;   // fixed horizon override (0=auto)
+extern cvar_t  *csp_horizon_bias; // additive horizon bias in ms
+extern cvar_t  *csp_smooth;       // 0=off, 1=decaying visual smoothing
+extern cvar_t  *csp_smooth_tau;   // smoothing time constant in ms (default 80)
+extern cvar_t  *csp_debug;        // 0=off, 1=console, 2=file
+extern cvar_t  *csp_debug_file;   // log file path for csp_debug 2
 
 void CL_FixCvarCheats (void);
 

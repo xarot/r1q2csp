@@ -200,6 +200,9 @@
     <ClCompile Include="client\cl_pred.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Dedicated|Win32'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="client\cl_csp.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Dedicated|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="client\cl_scrn.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Dedicated|Win32'">true</ExcludedFromBuild>
     </ClCompile>
