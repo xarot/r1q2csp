@@ -685,10 +685,17 @@ Compute the prediction horizon in milliseconds.
 
 horizon = snapshot_age + (RTT * csp_mult / 2.0) + csp_horizon_bias
 
-Under symmetric network assumption:
-- snapshot_age includes downstream travel time already
-- RTT/2 estimates upstream delay to server
-- Commands execute immediately on arrival (no server scheduling delay)
+Timing model (symmetric network assumption):
+- snapshot_age = time since local receipt (cls.realtime - cur_receive_ms).
+  This is how stale the snapshot is from the client's perspective.
+  It does NOT include downstream travel time — that already elapsed
+  before cur_receive_ms was recorded.
+- RTT/2 estimates one-way network delay. The server state at servertime
+  was computed before the snapshot was sent, so the position is
+  effectively RTT/2 behind the server's "now".
+- Commands execute immediately on arrival (no server scheduling delay).
+- Together, snapshot_age + RTT/2 estimates how far in the past the
+  snapshot's position is relative to the server's current state.
 
 If csp_horizon_ms > 0: returns that fixed value instead.
 ====================
