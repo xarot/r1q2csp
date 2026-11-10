@@ -10,7 +10,7 @@ We've been playing Quake II since it shipped in December 1997. The community tha
 
 Modern game clients solved this with **client-side prediction**: the client guesses where things will be so you don't have to wait for the server to catch up. Quake II already does this for *your own movement* — try `cl_predict 1` and you'll feel the difference immediately. But that's all. The moment you raise your railgun at an opponent, the prediction stops. You're still aiming at where the server *last told* the enemy was, which at 200 ms round-trip can be a full second old.
 
-**Wayne Gretzky said: "I skate to where the puck is going to be, not where it has been."** That's exactly what this fork does, but for every entity on the screen.
+**Wayne Gretzky said: "I skate to where the puck is going to be, not where it has been."** That's what high-pingers need to do everyday by taking a lot of advance in their aiming. What we aim for with this fork, is that we could switch from crosshair advance to client-side advance. Then we could aim directly at the player instead. 
 
 ### How it works (the short version)
 
