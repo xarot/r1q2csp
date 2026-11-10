@@ -1,0 +1,7 @@
+# Visual Studio / build output
+.vs/
+build/
+vcpkg_installed/
+*.user
+*.VC.db
+*.VC.opendb

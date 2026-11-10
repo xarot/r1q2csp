@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{1C27F295-DC7F-5593-801C-5ADA8A278EA4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\game">
+      <UniqueIdentifier>{28AE5AE5-F9F3-500C-85A3-9E3801E6D1B9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\ref_gl">
+      <UniqueIdentifier>{7916955D-11DA-57DB-A293-BB45610ACAAA}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\win32">
+      <UniqueIdentifier>{83F9682E-A4D9-56EE-89C8-F5F4499B9612}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{43341EAC-4CA2-5983-A96E-809A17A8C901}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\ref_gl">
+      <UniqueIdentifier>{CE17BCE8-18F4-58A6-826B-8527EBFC32A0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\win32">
+      <UniqueIdentifier>{D9690C2F-80B4-55F5-A74B-FD0B5B85BF54}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\game">
+      <UniqueIdentifier>{B79D3A37-7ED4-51E3-9CA5-6CE266CB56F3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\qcommon">
+      <UniqueIdentifier>{D17F8DDC-0E6E-5896-B6A0-A9685CB8BE7F}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\client">
+      <UniqueIdentifier>{D56C6CB6-6DB5-5134-AFDB-1E227421F009}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{4DCEB82C-7C4D-5BBB-B6F9-437722DB09FD}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\game\q_shared.c">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_draw.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_image.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_light.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_mesh.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_model.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rmain.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rmisc.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rsurf.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_warp.c">
+      <Filter>Source Files\ref_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\win32\glw_imp.c">
+      <Filter>Source Files\win32</Filter>
+    </ClCompile>
+    <ClCompile Include="..\win32\q_shwin.c">
+      <Filter>Source Files\win32</Filter>
+    </ClCompile>
+    <ClCompile Include="..\win32\qgl_win.c">
+      <Filter>Source Files\win32</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="anorms.h">
+      <Filter>Header Files\ref_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="anormtab.h">
+      <Filter>Header Files\ref_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gl_local.h">
+      <Filter>Header Files\ref_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gl_model.h">
+      <Filter>Header Files\ref_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="glext.h">
+      <Filter>Header Files\ref_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="qgl.h">
+      <Filter>Header Files\ref_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files\ref_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="warpsin.h">
+      <Filter>Header Files\ref_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="..\win32\glw_win.h">
+      <Filter>Header Files\win32</Filter>
+    </ClInclude>
+    <ClInclude Include="..\win32\winquake.h">
+      <Filter>Header Files\win32</Filter>
+    </ClInclude>
+    <ClInclude Include="..\win32\wglext.h">
+      <Filter>Header Files\win32</Filter>
+    </ClInclude>
+    <ClInclude Include="..\game\q_shared.h">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="..\qcommon\qcommon.h">
+      <Filter>Header Files\qcommon</Filter>
+    </ClInclude>
+    <ClInclude Include="..\qcommon\qfiles.h">
+      <Filter>Header Files\qcommon</Filter>
+    </ClInclude>
+    <ClInclude Include="..\client\ref.h">
+      <Filter>Header Files\client</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ref_gl.def">
+      <Filter>Resource Files</Filter>
+    </None>
+  </ItemGroup>
+</Project>
