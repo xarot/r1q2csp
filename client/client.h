@@ -817,8 +817,12 @@ void CL_PredictMovement (void);
 // cl_csp.c - Client-Side Prediction (ghost entities)
 //
 void CL_CSP_ValueChanged (struct cvar_s *self, char *oldValue, char *newValue);
+void CL_CSP_SmoothChanged (struct cvar_s *self, char *oldValue, char *newValue);
 void CL_CSP_ClearState (void);
 void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3_t out_angles);
+void CL_CSP_SampleRTT (void);
+void CL_CSP_ProcessSnapshot (void);
+void CL_CSP_FrameValidated (void);
 
 // CSP cvar exports (declared in cl_main.c, used by cl_csp.c)
 extern cvar_t  *csp_enable;       // 0=off, 1=ghost+real, 2=ghost only

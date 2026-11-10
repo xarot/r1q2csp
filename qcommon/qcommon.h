@@ -129,8 +129,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #else
 	#define R1BINARY "R1Q2"
 	#define RELEASESTRING "Source Build"
-	#define PRODUCTNAME "R1Q2 (modified)"
-	#define PRODUCTNAMELOWER "r1q2 (mod)"
+	#define PRODUCTNAME "r1q2 (csp mod)"
+	#define PRODUCTNAMELOWER "r1q2 (csp mod)"
 #endif
 
 #define R1Q2_VERSION_STRING "R1Q2 " VERSION " " CPUSTRING " " __DATE__ " " BUILDSTRING
