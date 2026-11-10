@@ -278,6 +278,7 @@ void CL_CSP_SmoothChanged (cvar_t *self, char *oldValue, char *newValue)
 //
 static int csp_snapshot_receive_ms = 0;
 static int csp_snapshot_serverframe = 0;
+static int csp_snapshot_processed_frame = 0;  // Phase E2: idempotency guard
 
 //
 // Extern cvar declarations — registered in cl_main.c
@@ -485,6 +486,102 @@ static void CL_CSP_LogSnapshot (
 
 /*
 ====================
+CL_CSP_ProcessSnapshot
+
+Phase E2: Snapshot membership lifecycle — called from cl_main.c after
+CL_ParseServerMessage() returns true, when cl.frame and all packet entities
+are fully populated.
+
+Iterates over ALL tracked entity slots (not just those in the render loop)
+and detects entities that are ABSENT from the current authoritative snapshot.
+For each absent entity:
+  - Clears velocity and smoothing state
+  - Records the absence transition (prev_present/cur_present)
+  - Logs the snapshot row exactly once (deduped by snap_logged_serverframe)
+
+This decouples absence detection from the render path. Previously, the
+entity-absent reseed path in CL_CSP_UpdateEntityVelocity could only execute
+if the entity reached the render loop — which it never does when absent.
+
+Idempotent: guarded by csp_snapshot_processed_frame to prevent double
+processing within the same serverframe.
+====================
+*/
+void CL_CSP_ProcessSnapshot (void)
+{
+	int i;
+	int max_entities;
+
+	// Guard: only process when we have valid frame data
+	if (cl.frame.servertime == 0 && cl.frame.serverframe == 0)
+		return;
+
+	// Idempotency: only process once per serverframe
+	if (csp_snapshot_processed_frame == cl.frame.serverframe)
+		return;
+	csp_snapshot_processed_frame = cl.frame.serverframe;
+
+	// Only process when CSP is enabled and we're in active game state
+	if (csp_enable->intvalue <= 0)
+		return;
+	if (cls.state != ca_active)
+		return;
+
+	// Determine the range of player entity slots to check.
+	// Player entities start at index 1 (0 is worldspawn) and go up to
+	// cl.maxclients. Guard against cl.maxclients being 0 during map loading.
+	if (cl.maxclients == 0)
+		return;
+	max_entities = (int)cl.maxclients + 1;
+	if (max_entities > CSP_MAX_ENTITIES)
+		max_entities = CSP_MAX_ENTITIES;
+
+	for (i = 1; i < max_entities; i++)
+	{
+		csp_entity_state_t *st = &csp_entities[i];
+
+		// Only process entities that have been initialized (seen at least once)
+		if (!st->initialized)
+			continue;
+
+		// Check actual snapshot membership: cl_entities[i].serverframe is set
+		// by CL_SetEntState during parsing ONLY if the entity was present in
+		// the current snapshot's delta stream. If it doesn't match the current
+		// frame, the entity was ABSENT from this authoritative snapshot.
+		qboolean entity_present = (cl_entities[i].serverframe == cl.frame.serverframe);
+
+		// Record snapshot continuity: presence + drop counter deltas
+		st->prev_present = st->cur_present;
+		st->cur_present  = entity_present ? 1 : 0;
+		st->prev_dropped = st->cur_dropped;
+		st->cur_dropped  = cls.netchan.dropped;
+
+		// Entity ABSENT from current snapshot — perform reseed
+		if (!entity_present)
+		{
+			st->has_velocity = false;
+			VectorClear (st->velocity);
+			CL_CSP_ResetSmoothing (st);
+			st->last_reset_reason = CSP_RESET_ENTITY_ABSENT;
+
+			// Log the absence TRANSITION exactly once: only when the entity
+			// was present in the previous snapshot (prev_present was 1 before
+			// the shift above). Subsequent absent frames do not re-log.
+			if (st->prev_present == 1)
+			{
+				qboolean age_clamped = false;
+				float horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
+				VectorCopy (st->cur_origin, st->raw_predicted);
+				if (csp_debug->intvalue > 0)
+					CL_CSP_LogSnapshot (i, st, CL_CSP_GetRTTMs(), horizon_ms,
+						true, "entity_not_in_snapshot", age_clamped);
+			}
+		}
+	}
+}
+
+/*
+====================
 CL_CSP_UpdateEntityVelocity
 
 Update the entity's velocity estimate from authoritative snapshots.
@@ -514,38 +611,35 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 	if (st->cur_serverframe == cl.frame.serverframe)
 		return;  // already updated this frame
 
-	// Section B: Determine actual snapshot membership from cent->serverframe.
-	// cent->serverframe is set by CL_ParseEntity when the entity appears in
-	// the delta stream. If it does not match the current frame, the entity
-	// was NOT present in this authoritative snapshot.
-	qboolean entity_present = (cent->serverframe == cl.frame.serverframe);
-
-	// Record snapshot continuity (Req 1): presence + drop counter deltas.
-	// These are recorded BEFORE the shift so prev_* reflects the prior
-	// snapshot's state.
-	st->prev_present = st->cur_present;
-	st->cur_present  = entity_present ? 1 : 0;
-	st->prev_dropped = st->cur_dropped;
-	st->cur_dropped  = cls.netchan.dropped;
-
-	// Section B: Entity-absent reseed — moved here from PredictEntity so it
-	// runs BEFORE the stored state advances. If the entity was not in the
-	// current snapshot, clear stale velocity and reseed.
-	if (st->initialized && !entity_present)
+	// Phase E2: Entity presence is now handled by CL_CSP_ProcessSnapshot
+	// (called from cl_main.c after parsing). This function only runs for
+	// entities PRESENT in the current snapshot (they reached the render loop).
+	//
+	// Reappearance detection: if the entity was absent in the previous
+	// snapshot (prev_present == 0, set by CL_CSP_ProcessSnapshot) and is now
+	// present, establish a fresh baseline. Do NOT compute velocity across
+	// the missing interval using the old position.
+	// seen_count > 1 ensures this is a genuine reappearance, not the first
+	// frame after initialization (where prev_present is 0 by default).
+	if (st->initialized && st->prev_present == 0 && st->seen_count > 1)
 	{
+		// Entity reappeared after absence — fresh baseline
+		st->prev_servertime = cl.frame.servertime;
+		st->prev_serverframe = cl.frame.serverframe;
+		VectorCopy (cent->current.origin, st->prev_origin);
+		st->cur_servertime = cl.frame.servertime;
+		st->cur_serverframe = cl.frame.serverframe;
+		VectorCopy (cent->current.origin, st->cur_origin);
+		st->cur_receive_ms = csp_snapshot_receive_ms;
 		st->has_velocity = false;
 		VectorClear (st->velocity);
 		CL_CSP_ResetSmoothing (st);
 		st->last_reset_reason = CSP_RESET_ENTITY_ABSENT;
-		st->prev_servertime = st->cur_servertime;
-		st->prev_serverframe = st->cur_serverframe;
-		VectorCopy (st->cur_origin, st->prev_origin);
-		st->cur_serverframe = cl.frame.serverframe;
-		st->cur_receive_ms = csp_snapshot_receive_ms;
+		st->seen_count++;
 		reseeded = true;
-		reseed_reason = "entity_not_in_snapshot";
+		reseed_reason = "entity_reappeared_fresh_baseline";
 
-		// Section C: Log snapshot state transition
+		// Log the reappearance transition
 		horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
 		VectorCopy (st->cur_origin, st->raw_predicted);
 		if (csp_debug->intvalue > 0)

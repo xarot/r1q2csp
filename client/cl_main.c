@@ -2114,6 +2114,12 @@ void CL_ReadPackets (void)
 		// netgraph settings cannot disable RTT updates.
 		CL_CSP_SampleRTT ();
 
+		// Phase E2: Snapshot membership lifecycle — detect entities absent
+		// from the current authoritative snapshot and reseed their state.
+		// Must run after parsing (cl.frame fully populated) and before
+		// rendering (so the render path sees correct prev_present).
+		CL_CSP_ProcessSnapshot ();
+
 		CL_AddNetgraph ();
 
 		if (scr_sizegraph->intvalue)
