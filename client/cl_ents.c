@@ -1346,10 +1346,18 @@ void CL_ParseFrame (int extrabits)
 		Com_Printf ("   frame:%i  delta:%i\n", LOG_CLIENT, cl.frame.serverframe,
 		cl.frame.deltaframe);
 
+	// Phase E4: explicitly clear the validity flag before validation.
+	// cl.frame.valid is NOT cleared at the start of CL_ParseFrame in the
+	// original code — it retains the previous frame's value. This means
+	// reading cl.frame.valid after the validation block would be unreliable
+	// (could be stale-true from a prior valid frame). By clearing it here,
+	// the flag is a clean indicator of THIS frame's validation result.
+	cl.frame.valid = false;
+
 	// If the frame is delta compressed from data that we
 	// no longer have available, we must suck up the rest of
 	// the frame, but not use it, then ask for a non-compressed
-	// message 
+	// message
 	if (cl.frame.deltaframe <= 0)
 	{
 		cl.frame.valid = true;		// uncompressed frame
@@ -1411,6 +1419,15 @@ void CL_ParseFrame (int extrabits)
 	}
 
 	CL_ParsePacketEntities (old, &cl.frame);
+
+	// Phase E4: mark the authoritative frame as validated ONLY if it passed
+	// delta validation (cl.frame.valid was cleared before the validation
+	// block and set to true only on the uncompressed or valid-delta path).
+	// This is the single point where csp_authoritative_frame_parsed is set,
+	// ensuring invalid delta bases and svc_playerupdate-only messages never
+	// trigger CL_CSP_ProcessSnapshot().
+	if (cl.frame.valid)
+		CL_CSP_FrameValidated ();
 
 	//r1: now write protocol 34 compatible delta from our localstate for demo.
 	if (!cls.demowaiting && cls.demorecording && cls.serverProtocol != PROTOCOL_ORIGINAL)

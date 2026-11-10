@@ -151,11 +151,17 @@ static int csp_snapshot_serverframe = 0;
 static int csp_snapshot_processed_frame = 0;  // Phase E2: idempotency guard
 
 //
-// Phase E3: authoritative-frame indicator.
-// Set to true ONLY when a real svc_frame is parsed (CL_CSP_ParseFrameNotify,
-// called from CL_ParseFrame). This decouples snapshot membership processing
-// from CL_ParseServerMessage()'s return value, which is false for
-// svc_playerupdate (delta) messages even when gotFrame is true.
+// Phase E3/E4: authoritative-frame indicator.
+// Set to true ONLY after a real svc_frame has been successfully reconstructed
+// AND its packet entities have been parsed (CL_CSP_FrameValidated, called from
+// CL_ParseFrame after CL_ParsePacketEntities). This decouples snapshot
+// membership processing from CL_ParseServerMessage()'s return value, which is
+// false for svc_playerupdate (delta) messages even when gotFrame is true.
+//
+// Phase E4: the flag is no longer set in CL_CSP_ParseFrameNotify (which runs at
+// the top of CL_ParseFrame, before delta validation). It is now set only on the
+// validated-frame path, so invalid delta bases and svc_playerupdate-only
+// messages can never trigger CL_CSP_ProcessSnapshot().
 //
 static qboolean csp_authoritative_frame_parsed = false;
 
@@ -412,16 +418,12 @@ void CL_CSP_ParseFrameNotify (void)
 	csp_snapshot_receive_ms = cls.realtime;
 	csp_snapshot_serverframe = cl.frame.serverframe;
 
-	// Phase E3: mark that a real authoritative svc_frame was parsed.
-	// This is the ONLY place this flag is set to true — it is called
-	// exclusively from CL_ParseFrame (cl_ents.c), which is reached only
-	// via the svc_frame command in CL_ParseServerMessage. A
-	// svc_playerupdate (delta) message never reaches this path, so it
-	// cannot set this flag. CL_CSP_ProcessSnapshot() self-guards on it,
-	// decoupling membership processing from CL_ParseServerMessage()'s
-	// return value (which is false for svc_playerupdate even when
-	// gotFrame is true).
-	csp_authoritative_frame_parsed = true;
+	// Phase E4: the authoritative-frame indicator is NO LONGER set here.
+	// This function runs at the top of CL_ParseFrame, before delta-frame
+	// validation and packet-entity parsing. Setting the flag here would
+	// incorrectly mark invalid delta bases as processed. The flag is now
+	// set exclusively by CL_CSP_FrameValidated(), which is called after
+	// CL_ParsePacketEntities only when the frame passed validation.
 
 	// Auto-open debug files at level 2 — two independent CSV streams (Phase C)
 	if (csp_debug->intvalue >= 2)
@@ -505,6 +507,32 @@ void CL_CSP_ParseFrameNotify (void)
 			}
 		}
 	}
+}
+
+/*
+====================
+CL_CSP_FrameValidated
+
+Phase E4: called from CL_ParseFrame (cl_ents.c) ONLY after the frame has
+passed delta validation AND CL_ParsePacketEntities has completed. This is
+the single point where csp_authoritative_frame_parsed is set to true.
+
+This ensures:
+- Invalid delta bases (old->valid == false, serverframe mismatch,
+  parse_entities too old) never trigger CL_CSP_ProcessSnapshot().
+- svc_playerupdate-only messages never trigger membership processing
+  (they never reach CL_ParseFrame at all).
+- Valid uncompressed and valid delta frames each trigger exactly one
+  membership-processing pass (enforced by the idempotency guard in
+  CL_CSP_ProcessSnapshot).
+====================
+*/
+void CL_CSP_FrameValidated (void)
+{
+	if (cls.state != ca_active)
+		return;
+
+	csp_authoritative_frame_parsed = true;
 }
 
 // ====================================================================
