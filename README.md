@@ -4,6 +4,29 @@ A fork of [R1Q2](http://r1ch.net/r1q2/) — R1CH's enhanced Quake II client — 
 
 > **This project is a fork of R1CH's R1Q2.** All original engine code, architecture, and design are R1CH's work. See [`readme.txt`](readme.txt) for the original R1Q2 documentation. This fork adds the CSP subsystem and associated diagnostics; everything else is upstream.
 
+## Why this fork exists
+
+We've been playing Quake II since it shipped in December 1997. The community that built those late-night frag-fests is getting smaller every year — people are aging, moving on, or simply gone. What remains is a scattered group of players spread across time zones: someone in Helsinki with 5 ms ping, someone in Toronto with 150 ms, someone in Sydney with 300 ms. The game was designed for a LAN room full of friends, not for a global lobby where the slowest connection sets the pace for everyone.
+
+Modern game clients solved this with **client-side prediction**: the client guesses where things will be so you don't have to wait for the server to catch up. Quake II already does this for *your own movement* — try `cl_predict 1` and you'll feel the difference immediately. But that's all. The moment you raise your shotgun at an opponent, the prediction stops. You're still aiming at where the server *last told* the enemy was, which at 200 ms round-trip can be a full second old.
+
+**Wayne Gretzky said: "I skate to where the puck is going to be, not where it has been."** That's exactly what this fork does, but for every entity on the screen.
+
+### How it works (the short version)
+
+Think of it like watching a car drive down a highway through a slightly delayed video feed. You see the car at position A, then a moment later at position B. Your brain instantly knows: "It's moving from A to B, so right now it's probably a bit past B." You don't wait for the next frame — you *extrapolate*.
+
+That's what CSP does for every player, monster, and projectile:
+
+1. **Measure the delay** — how old the latest server snapshot is, plus the round-trip time.
+2. **Estimate the velocity** — how far the entity moved between two snapshots, divided by the time that took.
+3. **Project forward** — last known position + velocity × delay = where the entity *should be right now*.
+4. **Render a ghost** — that predicted position is drawn as a translucent overlay on top of the server-authoritative model.
+
+**Where do you aim?** At the ghost, not the solid model. The solid model is where the server says the enemy *was*. The ghost is where the client believes the enemy *is*. At 5 ms ping the two are nearly identical. At 250 ms ping the ghost can be several meters ahead — and that's the difference between a clean headshot and a spray into empty air.
+
+**The goal: make a 250 ms connection feel like 50 ms, so that Helsinki, Toronto, and Sydney can frag each other in the same room.**
+
 ---
 
 ## What is CSP?
