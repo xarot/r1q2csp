@@ -2366,8 +2366,9 @@ void Sys_SetFPU (byte bits)
 		mov ecx, eax
 		fnstcw word ptr [eax]
 		mov eax, [eax]
-		and ah, 0f0h
-		or  ah, bits          ; RTZ/truncate/chop mode, 24 bit precision
+		and ah, 0f0h          ; clear CW bits 8-11 (PC + rounding/exception masks)
+		or  ah, bits          ; set CW bits 8-11 from parameter
+		and ah, 0fch          ; clear PC (CW bits 8-9) → force 24-bit single precision
 		mov [ecx], eax
 		fldcw word ptr [ecx]
 		pop eax
