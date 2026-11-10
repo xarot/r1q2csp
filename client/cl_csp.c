@@ -89,6 +89,16 @@ typedef struct {
 
 	// Last reset reason (diagnostics)
 	csp_reset_reason_t last_reset_reason;
+
+	// Snapshot-log dedupe: serverframe for which the snapshot CSV row was
+	// already emitted this frame. Ensures exactly one snapshot row per
+	// entity per authoritative snapshot even though PredictEntity runs at
+	// render frequency.
+	int   snap_logged_serverframe;
+
+	// Raw (pre-smoothing) predicted position — stored during PredictEntity
+	// so the render CSV can report both raw and smoothed values.
+	float raw_predicted[3];
 } csp_entity_state_t;
 
 static csp_entity_state_t csp_entities[CSP_MAX_ENTITIES];
@@ -124,9 +134,13 @@ extern client_static_t cls;
 // csp_smooth (default 0 = disabled) and must not affect underlying
 // prediction or diagnostics.
 //
-// Debug logging state
+// Debug logging state — two independent CSV streams (Req 3 / Phase C):
+//   csp_debug_fp    : snapshot CSV (one row per entity per authoritative snapshot)
+//   csp_render_fp   : render CSV   (one row per entity per rendered frame)
 static FILE *csp_debug_fp = NULL;
+static FILE *csp_render_fp = NULL;
 static int csp_debug_frame = 0;
+static int csp_render_frame = 0;
 
 /*
 ====================
@@ -168,7 +182,13 @@ void CL_CSP_ClearState (void)
 		fclose (csp_debug_fp);
 		csp_debug_fp = NULL;
 	}
+	if (csp_render_fp)
+	{
+		fclose (csp_render_fp);
+		csp_render_fp = NULL;
+	}
 	csp_debug_frame = 0;
+	csp_render_frame = 0;
 	for (i = 0; i < CSP_MAX_ENTITIES; i++)
 	{
 		csp_entities[i].initialized = false;
@@ -194,6 +214,8 @@ void CL_CSP_ClearState (void)
 		csp_entities[i].prev_dropped = 0;
 		csp_entities[i].cur_dropped = 0;
 		csp_entities[i].last_reset_reason = CSP_RESET_NONE;
+		csp_entities[i].snap_logged_serverframe = 0;
+		VectorClear (csp_entities[i].raw_predicted);
 	}
 }
 
@@ -350,28 +372,78 @@ void CL_CSP_ParseFrameNotify (void)
 	csp_snapshot_receive_ms = cls.realtime;
 	csp_snapshot_serverframe = cl.frame.serverframe;
 
-	// Auto-open debug file at level 2
-	if (csp_debug->intvalue >= 2 && !csp_debug_fp)
+	// Auto-open debug files at level 2 — two independent CSV streams (Phase C)
+	if (csp_debug->intvalue >= 2)
 	{
-		csp_debug_fp = fopen (csp_debug_file->string, "w");
-		if (csp_debug_fp)
+		// --- Snapshot CSV (one row per entity per authoritative snapshot) ---
+		if (!csp_debug_fp)
 		{
-			csp_debug_frame = 0;
-			fprintf (csp_debug_fp,
-				"frame,"
-				"local_receive_ms,serverframe,servertime,"
-				"ent_num,"
-				"snap_origin_x,snap_origin_y,snap_origin_z,"
-				"prev_origin_x,prev_origin_y,prev_origin_z,"
-				"velocity_x,velocity_y,velocity_z,"
-				"dt_ms,snapshot_age_ms,"
-				"rtt_ms,rtt_source,mult,horizon_bias,"
-				"horizon_ms,"
-				"predicted_x,predicted_y,predicted_z,"
-				"rendered_x,rendered_y,rendered_z,"
-				"diff_x,diff_y,diff_z,diff_mag,"
-				"valid,reseeded,reseed_reason,snap_age_clamped\n");
-			fflush (csp_debug_fp);
+			csp_debug_fp = fopen (csp_debug_file->string, "w");
+			if (csp_debug_fp)
+			{
+				csp_debug_frame = 0;
+				fprintf (csp_debug_fp,
+					"row_id,"
+					"local_receive_ms,serverframe,servertime,"
+					"ent_num,"
+					"prev_present,cur_present,"
+					"prev_serverframe,cur_serverframe,serverframe_delta,"
+					"prev_dropped,cur_dropped,drop_delta,"
+					"snap_origin_x,snap_origin_y,snap_origin_z,"
+					"prev_origin_x,prev_origin_y,prev_origin_z,"
+					"velocity_x,velocity_y,velocity_z,"
+					"dt_ms,snapshot_age_ms,"
+					"rtt_ms,rtt_source,mult,horizon_bias,horizon_ms,"
+					"raw_predicted_x,raw_predicted_y,raw_predicted_z,"
+					"has_velocity,reseeded,reseed_reason,snap_age_clamped,"
+					"prev_anim_frame,cur_anim_frame,"
+					"prev_event,cur_event,"
+					"modelindex,solid,effects,renderfx,"
+					"prev_angles_x,prev_angles_y,prev_angles_z,"
+					"cur_angles_x,cur_angles_y,cur_angles_z\n");
+				fflush (csp_debug_fp);
+			}
+		}
+
+		// --- Render CSV (one row per entity per rendered frame) ---
+		if (!csp_render_fp)
+		{
+			char render_path[512];
+			// Derive render filename: csp_debug.log -> csp_render.log
+			const char *base = csp_debug_file->string;
+			const char *dot = strrchr (base, '.');
+			if (dot)
+			{
+				int len = (int)(dot - base);
+				if (len > 500) len = 500;
+				memcpy (render_path, base, len);
+				strcpy (render_path + len, "_render.log");
+			}
+			else
+			{
+				int len = (int)strlen (base);
+				if (len > 500) len = 500;
+				memcpy (render_path, base, len);
+				strcpy (render_path + len, "_render.log");
+			}
+
+			csp_render_fp = fopen (render_path, "w");
+			if (csp_render_fp)
+			{
+				csp_render_frame = 0;
+				fprintf (csp_render_fp,
+					"row_id,"
+					"render_ms,serverframe,servertime,"
+					"ent_num,"
+					"engine_interp_x,engine_interp_y,engine_interp_z,"
+					"raw_predicted_x,raw_predicted_y,raw_predicted_z,"
+					"smoothed_ghost_x,smoothed_ghost_y,smoothed_ghost_z,"
+					"smooth_active,smooth_offset_x,smooth_offset_y,smooth_offset_z,"
+					"smooth_elapsed_ms,smooth_decay,"
+					"original_rendered,"
+					"ghost_mode\n");
+				fflush (csp_render_fp);
+			}
 		}
 	}
 }
@@ -652,86 +724,195 @@ static float CL_CSP_CalculateHorizon (csp_entity_state_t *st, qboolean *age_clam
 }
 
 // ====================================================================
-// Debug Logging
+// Snapshot and Render Logging (Phase C — two-stream CSV)
 // ====================================================================
 
 /*
 ====================
-CL_CSP_DebugLog
+CL_CSP_LogSnapshot
 
-Log one row of prediction CSV per entity per snapshot.
-Only fires when csp_debug >= 1. Console prints at level 1, file CSV at level 2.
+Log one row to the snapshot CSV per entity per authoritative snapshot.
+Deduped by snap_logged_serverframe so that multiple PredictEntity calls
+for the same serverframe (body, weapon, linked) produce exactly one row.
+
+Includes all Req 1 (continuity) and Req 4 (movement/animation) fields.
+The "valid" column is removed — has_velocity is the meaningful indicator.
+RTT source uses the csp_rtt_source enum (override/measured/fallback).
 ====================
 */
-static void CL_CSP_DebugLog (
-	int ent_num, vec3_t predicted, vec3_t rendered,
-	csp_entity_state_t *st, float rtt_ms, float horizon_ms,
+static void CL_CSP_LogSnapshot (
+	int ent_num, csp_entity_state_t *st,
+	float rtt_ms, float horizon_ms,
 	qboolean reseeded, const char *reseed_reason, qboolean age_clamped)
 {
-	float dx, dy, dz, diff_mag;
+	centity_t *cent;
+	const char *rtt_source_str;
 
-	dx = predicted[0] - rendered[0];
-	dy = predicted[1] - rendered[1];
-	dz = predicted[2] - rendered[2];
-	diff_mag = sqrtf (dx*dx + dy*dy + dz*dz);
-
-	// CSV to file at level 2
-	if (csp_debug->intvalue >= 2 && csp_debug_fp)
-	{
-		csp_debug_frame++;
-
-		fprintf (csp_debug_fp,
-			"%d,"           // frame
-			"%d,%d,%d,"     // local_receive_ms, serverframe, servertime
-			"%d,"           // ent_num
-			"%.1f,%.1f,%.1f,"   // snap_origin
-			"%.1f,%.1f,%.1f,"   // prev_origin
-			"%.2f,%.2f,%.2f,"   // velocity
-			"%.1f,%.1f,"  // dt_ms, snapshot_age_ms
-			"%.1f,%s,%.2f,%.1f,"   // rtt_ms, rtt_source, mult, horizon_bias
-			"%.1f,"        // horizon_ms
-			"%.1f,%.1f,%.1f,"  // predicted
-			"%.1f,%.1f,%.1f,"  // rendered
-			"%.1f,%.1f,%.1f,%.1f,"  // diff x,y,z,mag
-			"%d,%d,%s,%d\n",  // valid, reseeded, reseed_reason, age_clamped
-			csp_debug_frame,
-			csp_snapshot_receive_ms, cl.frame.serverframe, cl.frame.servertime,
-			ent_num,
-			st->cur_origin[0], st->cur_origin[1], st->cur_origin[2],
-			st->prev_origin[0], st->prev_origin[1], st->prev_origin[2],
-			st->velocity[0], st->velocity[1], st->velocity[2],
-			(float)(cl.frame.servertime - st->prev_servertime),
-			(float)cls.realtime - (float)st->cur_receive_ms,
-			rtt_ms,
-			csp_latency_ms->intvalue > 0 ? "override" : "acked",
-			csp_mult->value, csp_horizon_bias->value,
-			horizon_ms,
-			predicted[0], predicted[1], predicted[2],
-			rendered[0], rendered[1], rendered[2],
-			dx, dy, dz, diff_mag,
-			st->initialized && st->has_velocity,
-			reseeded ? 1 : 0,
-			reseed_reason ? reseed_reason : "",
-			age_clamped ? 1 : 0
-		);
-		fflush (csp_debug_fp);
-	}
+	// Dedupe: only log once per entity per authoritative snapshot
+	if (st->snap_logged_serverframe == cl.frame.serverframe)
+		return;
+	st->snap_logged_serverframe = cl.frame.serverframe;
 
 	// Console log at level 1
 	if (csp_debug->intvalue == 1)
 	{
 		Com_Printf ("CSP[%d]: snap=(%.0f,%.0f,%.0f) vel=(%.1f,%.1f,%.1f) "
-			"horiz=%.1fms pred=(%.0f,%.0f,%.0f) diff=%.1f %s\n",
+			"horiz=%.1fms pred=(%.0f,%.0f,%.0f) %s\n",
 			LOG_CLIENT,
 			ent_num,
 			st->cur_origin[0], st->cur_origin[1], st->cur_origin[2],
 			st->velocity[0], st->velocity[1], st->velocity[2],
 			horizon_ms,
-			predicted[0], predicted[1], predicted[2],
-			diff_mag,
+			st->raw_predicted[0], st->raw_predicted[1], st->raw_predicted[2],
 			reseeded ? "RESET" : (age_clamped ? "CLAMP" : "ok")
 		);
 	}
+
+	// CSV to file at level 2
+	if (csp_debug->intvalue < 2 || !csp_debug_fp)
+		return;
+
+	csp_debug_frame++;
+
+	// RTT source string from enum
+	switch (csp_rtt_source)
+	{
+	case CSP_RTT_SOURCE_OVERRIDE: rtt_source_str = "override"; break;
+	case CSP_RTT_SOURCE_MEASURED: rtt_source_str = "measured"; break;
+	default:                      rtt_source_str = "fallback"; break;
+	}
+
+	// Get centity for Req 4 fields (animation frame, event, model, angles)
+	if (ent_num < 0 || ent_num >= MAX_EDICTS)
+		cent = NULL;
+	else
+		cent = &cl_entities[ent_num];
+
+	fprintf (csp_debug_fp,
+		"%d,"           // row_id
+		"%d,%d,%d,"     // local_receive_ms, serverframe, servertime
+		"%d,"           // ent_num
+		"%d,%d,"        // prev_present, cur_present
+		"%d,%d,%d,"     // prev_serverframe, cur_serverframe, serverframe_delta
+		"%d,%d,%d,"     // prev_dropped, cur_dropped, drop_delta
+		"%.1f,%.1f,%.1f,"   // snap_origin
+		"%.1f,%.1f,%.1f,"   // prev_origin
+		"%.2f,%.2f,%.2f,"   // velocity
+		"%.1f,%.1f,"  // dt_ms, snapshot_age_ms
+		"%.1f,%s,%.2f,%.1f,%.1f,"  // rtt_ms, rtt_source, mult, horizon_bias, horizon_ms
+		"%.1f,%.1f,%.1f,"  // raw_predicted
+		"%d,%d,%s,%d,"  // has_velocity, reseeded, reseed_reason, age_clamped
+		"%d,%d,"        // prev_anim_frame, cur_anim_frame
+		"%d,%d,"        // prev_event, cur_event
+		"%d,%d,%d,%d,"  // modelindex, solid, effects, renderfx
+		"%.1f,%.1f,%.1f,"  // prev_angles
+		"%.1f,%.1f,%.1f\n" // cur_angles
+		,
+		csp_debug_frame,
+		csp_snapshot_receive_ms, cl.frame.serverframe, cl.frame.servertime,
+		ent_num,
+		st->prev_present, st->cur_present,
+		st->prev_serverframe, st->cur_serverframe,
+		st->cur_serverframe - st->prev_serverframe,
+		st->prev_dropped, st->cur_dropped,
+		st->cur_dropped - st->prev_dropped,
+		st->cur_origin[0], st->cur_origin[1], st->cur_origin[2],
+		st->prev_origin[0], st->prev_origin[1], st->prev_origin[2],
+		st->velocity[0], st->velocity[1], st->velocity[2],
+		(float)(cl.frame.servertime - st->prev_servertime),
+		(float)cls.realtime - (float)st->cur_receive_ms,
+		rtt_ms, rtt_source_str,
+		csp_mult->value, csp_horizon_bias->value,
+		horizon_ms,
+		st->raw_predicted[0], st->raw_predicted[1], st->raw_predicted[2],
+		st->has_velocity ? 1 : 0,
+		reseeded ? 1 : 0,
+		reseed_reason ? reseed_reason : "",
+		age_clamped ? 1 : 0,
+		cent ? cent->prev.frame : 0,
+		cent ? cent->current.frame : 0,
+		cent ? cent->prev.event : 0,
+		cent ? cent->current.event : 0,
+		cent ? cent->current.modelindex : 0,
+		cent ? cent->current.solid : 0,
+		cent ? cent->current.effects : 0,
+		cent ? cent->current.renderfx : 0,
+		cent ? cent->prev.angles[0] : 0,
+		cent ? cent->prev.angles[1] : 0,
+		cent ? cent->prev.angles[2] : 0,
+		cent ? cent->current.angles[0] : 0,
+		cent ? cent->current.angles[1] : 0,
+		cent ? cent->current.angles[2] : 0
+	);
+	fflush (csp_debug_fp);
+}
+
+/*
+====================
+CL_CSP_LogRender
+
+Log one row to the render CSV per entity per rendered frame.
+Called from cl_ents.c ghost rendering block where both the
+engine-interpolated position and the smoothed ghost position are available.
+
+Captures:
+  - engine_interpolated_origin: the position the engine would render
+    (prev + lerpfrac * (current - prev))
+  - raw_predicted: pre-smoothing prediction (from entity state)
+  - smoothed_ghost: the actual displayed ghost position
+  - smoothing state: active, offset, elapsed, decay
+  - original_rendered: whether the original entity was also rendered
+    (GHOST_BOTH = 1, GHOST_ONLY = 0)
+====================
+*/
+void CL_CSP_LogRender (
+	int ent_num, vec3_t engine_interpolated_origin,
+	vec3_t smoothed_ghost_origin, qboolean original_entity_rendered,
+	int ghost_mode)
+{
+	csp_entity_state_t *st;
+	float elapsed_ms, decay;
+
+	if (csp_debug->intvalue < 2 || !csp_render_fp)
+		return;
+
+	if (ent_num < 0 || ent_num >= CSP_MAX_ENTITIES)
+		return;
+
+	st = &csp_entities[ent_num];
+
+	csp_render_frame++;
+
+	elapsed_ms = (float)cls.realtime - (float)st->smooth_offset_time;
+	if (elapsed_ms < 0.0f)
+		elapsed_ms = 0.0f;
+	decay = st->smooth_active ? expf (-elapsed_ms / csp_smooth_tau->value) : 0.0f;
+
+	fprintf (csp_render_fp,
+		"%d,"           // row_id
+		"%d,%d,%d,"     // render_ms, serverframe, servertime
+		"%d,"           // ent_num
+		"%.1f,%.1f,%.1f,"  // engine_interpolated
+		"%.1f,%.1f,%.1f,"  // raw_predicted
+		"%.1f,%.1f,%.1f,"  // smoothed_ghost
+		"%d,"           // smooth_active
+		"%.2f,%.2f,%.2f,"  // smooth_offset
+		"%.1f,%.4f,"  // smooth_elapsed_ms, smooth_decay
+		"%d,"           // original_rendered
+		"%d\n",         // ghost_mode
+		csp_render_frame,
+		(int)cls.realtime, cl.frame.serverframe, cl.frame.servertime,
+		ent_num,
+		engine_interpolated_origin[0], engine_interpolated_origin[1], engine_interpolated_origin[2],
+		st->raw_predicted[0], st->raw_predicted[1], st->raw_predicted[2],
+		smoothed_ghost_origin[0], smoothed_ghost_origin[1], smoothed_ghost_origin[2],
+		st->smooth_active ? 1 : 0,
+		st->smooth_offset[0], st->smooth_offset[1], st->smooth_offset[2],
+		elapsed_ms, decay,
+		original_entity_rendered ? 1 : 0,
+		ghost_mode
+	);
+	fflush (csp_render_fp);
 }
 
 // ====================================================================
@@ -846,6 +1027,9 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 		horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
 	}
 
+	// Store raw (pre-smoothing) prediction for render CSV (Req 2 / Req 5)
+	VectorCopy (out_origin, st->raw_predicted);
+
 	// Phase 2 smoothing — apply decaying visual offset to predictions.
 	//
 	// On a new snapshot (first render for this serverframe):
@@ -908,12 +1092,12 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 		out_angles[i] = LerpAngle (a2, a1, cl.lerpfrac);
 	}
 
-	// Debug logging (once per snapshot per entity)
+	// Snapshot logging (once per entity per authoritative snapshot, deduped)
 	if (csp_debug->intvalue > 0)
 	{
-		CL_CSP_DebugLog (
-			ent_num, out_origin, cent->current.origin,
-			st, CL_CSP_GetRTTMs(), horizon_ms,
+		CL_CSP_LogSnapshot (
+			ent_num, st,
+			CL_CSP_GetRTTMs(), horizon_ms,
 			reseeded, reseed_reason, age_clamped
 		);
 	}

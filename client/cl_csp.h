@@ -25,5 +25,6 @@ void    CL_CSP_UpdateRTT (float rtt_ms);                                        
 void    CL_CSP_SampleRTT (void);                                                             // Decoupled RTT sampling (Req 3)
 void    CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3_t out_angles);
 qboolean CL_CSP_ShouldRenderGhost (centity_t *cent, int ent_num);
+void    CL_CSP_LogRender (int ent_num, vec3_t engine_interpolated_origin, vec3_t smoothed_ghost_origin, qboolean original_entity_rendered, int ghost_mode);
 
 #endif

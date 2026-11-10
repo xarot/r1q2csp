@@ -2031,6 +2031,17 @@ lerp_time;*/
 			// Predict future position based on velocity and latency
 			CL_CSP_PredictEntity (cent, s1->number, predicted_origin, predicted_angles);
 
+			// Render CSV: log engine-interpolated vs raw vs smoothed ghost (Req 2)
+			// ent.origin here is the engine-interpolated position (prev + lerpfrac*(current-prev))
+			// predicted_origin is the raw+smoothed ghost position from PredictEntity
+			CL_CSP_LogRender (
+				s1->number,
+				ent.origin,
+				predicted_origin,
+				(csp_enable->intvalue == CSP_GHOST_BOTH) ? true : false,
+				csp_enable->intvalue
+			);
+
 			if (csp_enable->intvalue == CSP_GHOST_ONLY)
 			{
 				// Ghost-only: render near-solid ghost with blue shell overlay
