@@ -6,7 +6,7 @@ A fork of [R1Q2](http://r1ch.net/r1q2/) — R1CH's enhanced Quake II client — 
 
 ## Why this fork exists
 
-We've been playing Quake II since it shipped in December 1997. The community that built those late-night frag-fests is getting smaller every year — people are aging, moving on, or simply gone. What remains is a scattered group of players spread across time zones: someone in Stockholm with 5 ms ping, someone in Toronto with 150 ms, someone in Sydney with 300 ms. The game was designed for a LAN room full of friends, not for a global lobby where the slowest connection sets the pace for everyone.
+We've been playing Quake II since it shipped in December 1997. The community that built those late-night frag-fests is getting smaller every year — people are aging, moving on, or simply gone. What remains is a scattered group of players spread across time zones: someone in Stockholm with 5 ms ping, someone in Toronto with 150 ms, someone in Sydney with 300 ms. The game was designed for a LAN room full of friends, not for a global lobby where the 300 ms player is always the one missing shots while the 5 ms player looks like a ghost.
 
 Modern game clients solved this with **client-side prediction**: the client guesses where things will be so you don't have to wait for the server to catch up. Quake II already does this for *your own movement* — try `cl_predict 1` and you'll feel the difference immediately. But that's all. The moment you raise your shotgun at an opponent, the prediction stops. You're still aiming at where the server *last told* the enemy was, which at 200 ms round-trip can be a full second old.
 
