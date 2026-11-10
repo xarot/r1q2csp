@@ -5,3 +5,6 @@ vcpkg_installed/
 *.user
 *.VC.db
 *.VC.opendb
+
+# Markdown docs (kept locally, not tracked)
+*.md
