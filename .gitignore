@@ -8,3 +8,4 @@ vcpkg_installed/
 
 # Markdown docs (kept locally, not tracked)
 *.md
+!README.md
