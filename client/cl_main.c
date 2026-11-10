@@ -2114,24 +2114,23 @@ void CL_ReadPackets (void)
 		// netgraph settings cannot disable RTT updates.
 		CL_CSP_SampleRTT ();
 
-		// Phase E2: Snapshot membership lifecycle — detect entities absent
-		// from the current authoritative snapshot and reseed their state.
-		// Must run after parsing (cl.frame fully populated) and before
-		// rendering (so the render path sees correct prev_present).
-		CL_CSP_ProcessSnapshot ();
+	CL_AddNetgraph ();
 
-		CL_AddNetgraph ();
-
-		if (scr_sizegraph->intvalue)
-			CL_AddSizegraph ();
+	if (scr_sizegraph->intvalue)
+		CL_AddSizegraph ();
 	}
 
-	//
-	// we don't know if it is ok to save a demo message until
-	// after we have parsed the frame
-	//
-	if (cls.demorecording && !cls.demowaiting && cls.serverProtocol == PROTOCOL_ORIGINAL)
-		CL_WriteDemoMessageFull ();
+	// Phase E3: Snapshot membership lifecycle — detect entities absent
+	// from the current authoritative snapshot and reseed their state.
+	// Called UNCONDITIONALLY (outside the if-block above) because
+	// CL_ParseServerMessage() returns false for svc_playerupdate (delta)
+	// messages even when gotFrame is true. The function self-guards on
+	// csp_authoritative_frame_parsed (set only by CL_CSP_ParseFrameNotify,
+	// called exclusively from CL_ParseFrame for real svc_frame messages),
+	// so it is a no-op for delta-only messages. This ensures every
+	// authoritative svc_frame gets membership processing regardless of
+	// the general server-message return value.
+	CL_CSP_ProcessSnapshot ();
 	}
 
 	//

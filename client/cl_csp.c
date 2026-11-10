@@ -135,12 +135,29 @@ extern client_static_t cls;
 // prediction or diagnostics.
 //
 // Debug logging state — two independent CSV streams (Req 3 / Phase C):
-//   csp_debug_fp    : snapshot CSV (one row per entity per authoritative snapshot)
+//   csp_debug_fp    : snapshot CSV (present snapshots via update path;
+//                       absence transition logged once; see CL_CSP_LogSnapshot)
 //   csp_render_fp   : render CSV   (one row per entity per rendered frame)
 static FILE *csp_debug_fp = NULL;
 static FILE *csp_render_fp = NULL;
 static int csp_debug_frame = 0;
 static int csp_render_frame = 0;
+
+//
+// Per-frame timestamp capture — set by CL_CSP_ParseFrameNotify()
+//
+static int csp_snapshot_receive_ms = 0;
+static int csp_snapshot_serverframe = 0;
+static int csp_snapshot_processed_frame = 0;  // Phase E2: idempotency guard
+
+//
+// Phase E3: authoritative-frame indicator.
+// Set to true ONLY when a real svc_frame is parsed (CL_CSP_ParseFrameNotify,
+// called from CL_ParseFrame). This decouples snapshot membership processing
+// from CL_ParseServerMessage()'s return value, which is false for
+// svc_playerupdate (delta) messages even when gotFrame is true.
+//
+static qboolean csp_authoritative_frame_parsed = false;
 
 /*
 ====================
@@ -176,6 +193,14 @@ void CL_CSP_ClearState (void)
 	csp_rtt_sample_time = 0;
 	csp_rtt_acked_seq = 0;
 	csp_rtt_source = CSP_RTT_SOURCE_FALLBACK;
+
+	// Phase E3: reset per-frame snapshot lifecycle metadata so that a
+	// reconnect / map change cannot carry a stale idempotency guard or a
+	// stale authoritative-frame indicator into the next session.
+	csp_snapshot_receive_ms = 0;
+	csp_snapshot_serverframe = 0;
+	csp_snapshot_processed_frame = 0;
+	csp_authoritative_frame_parsed = false;
 
 	if (csp_debug_fp)
 	{
@@ -272,13 +297,6 @@ void CL_CSP_SmoothChanged (cvar_t *self, char *oldValue, char *newValue)
 #define CSP_MAX_JUMP          3000.0f   // units/s — max velocity magnitude (clamp)
 #define CSP_RTT_EMA_ALPHA     0.1f     // smoothing alpha for RTT tracker
 #define CSP_SNAP_INIT         2        // min snapshots before velocity is valid
-
-//
-// Per-frame timestamp capture — set by CL_CSP_ParseFrameNotify()
-//
-static int csp_snapshot_receive_ms = 0;
-static int csp_snapshot_serverframe = 0;
-static int csp_snapshot_processed_frame = 0;  // Phase E2: idempotency guard
 
 //
 // Extern cvar declarations — registered in cl_main.c
@@ -394,10 +412,27 @@ void CL_CSP_ParseFrameNotify (void)
 	csp_snapshot_receive_ms = cls.realtime;
 	csp_snapshot_serverframe = cl.frame.serverframe;
 
+	// Phase E3: mark that a real authoritative svc_frame was parsed.
+	// This is the ONLY place this flag is set to true — it is called
+	// exclusively from CL_ParseFrame (cl_ents.c), which is reached only
+	// via the svc_frame command in CL_ParseServerMessage. A
+	// svc_playerupdate (delta) message never reaches this path, so it
+	// cannot set this flag. CL_CSP_ProcessSnapshot() self-guards on it,
+	// decoupling membership processing from CL_ParseServerMessage()'s
+	// return value (which is false for svc_playerupdate even when
+	// gotFrame is true).
+	csp_authoritative_frame_parsed = true;
+
 	// Auto-open debug files at level 2 — two independent CSV streams (Phase C)
 	if (csp_debug->intvalue >= 2)
 	{
-		// --- Snapshot CSV (one row per entity per authoritative snapshot) ---
+		// --- Snapshot CSV ---
+		// Logging semantics (Phase E3): present snapshots are logged via the
+		// entity update path (one row per entity per snapshot); a
+		// present-to-absent transition is logged once by
+		// CL_CSP_ProcessSnapshot; continued absence produces no repeated row;
+		// reappearance is logged once as a fresh baseline. This is NOT one
+		// row for every entity in every snapshot.
 		if (!csp_debug_fp)
 		{
 			csp_debug_fp = fopen (csp_debug_file->string, "w");
@@ -488,8 +523,8 @@ static void CL_CSP_LogSnapshot (
 ====================
 CL_CSP_ProcessSnapshot
 
-Phase E2: Snapshot membership lifecycle — called from cl_main.c after
-CL_ParseServerMessage() returns true, when cl.frame and all packet entities
+Phase E2/E3: Snapshot membership lifecycle — called from cl_main.c after
+CL_ParseServerMessage() returns, when cl.frame and all packet entities
 are fully populated.
 
 Iterates over ALL tracked entity slots (not just those in the render loop)
@@ -503,14 +538,46 @@ This decouples absence detection from the render path. Previously, the
 entity-absent reseed path in CL_CSP_UpdateEntityVelocity could only execute
 if the entity reached the render loop — which it never does when absent.
 
+Phase E3 — authoritative-frame gating:
+  This function is now called UNCONDITIONALLY from cl_main.c (not inside
+  `if (CL_ParseServerMessage())`). CL_ParseServerMessage() returns false for
+  svc_playerupdate (delta) messages even when gotFrame is true, so gating on
+  its return value would skip membership processing for any message that
+  contains both svc_frame and svc_playerupdate. Instead, this function
+  self-guards on csp_authoritative_frame_parsed, which is set to true ONLY by
+  CL_CSP_ParseFrameNotify() (called exclusively from CL_ParseFrame, i.e. only
+  for a real svc_frame) and consumed here. A svc_playerupdate-only message
+  never sets this flag, so it cannot trigger a false entity-absence
+  transition.
+
 Idempotent: guarded by csp_snapshot_processed_frame to prevent double
 processing within the same serverframe.
+
+Logging semantics (intentional, do NOT change):
+  - Normal present snapshots: logged through the entity update path
+    (CL_CSP_UpdateEntityVelocity), one row per entity per snapshot.
+  - Present-to-absent transition: logged ONCE by this function (the
+    prev_present==1 branch below).
+  - Continued absence: no repeated row (prev_present is 0, so the log
+    branch is skipped).
+  - Reappearance: logged once as a fresh baseline via the update path.
+  This is NOT "one row for every entity in every snapshot" — absence is
+  logged as a single transition event, not per absent frame.
 ====================
 */
 void CL_CSP_ProcessSnapshot (void)
 {
 	int i;
 	int max_entities;
+
+	// Phase E3: only process when a real authoritative svc_frame was parsed
+	// in the current message. This flag is set by CL_CSP_ParseFrameNotify
+	// (called only from CL_ParseFrame, i.e. only for svc_frame) and consumed
+	// here. A svc_playerupdate (delta) message never sets this flag, so it
+	// cannot trigger a false entity-absence transition.
+	if (!csp_authoritative_frame_parsed)
+		return;
+	csp_authoritative_frame_parsed = false;  // consume
 
 	// Guard: only process when we have valid frame data
 	if (cl.frame.servertime == 0 && cl.frame.serverframe == 0)
@@ -949,9 +1016,21 @@ static float CL_CSP_CalculateHorizon (csp_entity_state_t *st, qboolean *age_clam
 ====================
 CL_CSP_LogSnapshot
 
-Log one row to the snapshot CSV per entity per authoritative snapshot.
-Deduped by snap_logged_serverframe so that multiple PredictEntity calls
-for the same serverframe (body, weapon, linked) produce exactly one row.
+Log one row to the snapshot CSV. Deduped by snap_logged_serverframe so
+that multiple calls for the same entity in the same serverframe produce
+exactly one row.
+
+Logging semantics (intentional, Phase E3 clarification):
+  - Normal present snapshots: logged through the entity update path
+    (CL_CSP_UpdateEntityVelocity), one row per entity per snapshot.
+  - Present-to-absent transition: logged ONCE by CL_CSP_ProcessSnapshot
+    (the prev_present==1 branch).
+  - Continued absence: no repeated row (prev_present is 0, so the log
+    branch in ProcessSnapshot is skipped).
+  - Reappearance: logged once as a fresh baseline via the update path.
+
+This is NOT "one row for every entity in every snapshot" — absence is
+logged as a single transition event, not per absent frame.
 
 Includes all Req 1 (continuity) and Req 4 (movement/animation) fields.
 The "valid" column is removed — has_velocity is the meaningful indicator.
