@@ -29,6 +29,21 @@
 
 #define CSP_SMOOTH_TAU_DEFAULT 80  // default smoothing time constant in ms
 
+//
+// Reset reasons — why a velocity/smoothing reseed occurred.
+// Used for diagnostics; an UNKNOWN value is preferred over inventing a
+// specific cause when the true reason cannot be established.
+//
+typedef enum {
+	CSP_RESET_NONE = 0,
+	CSP_RESET_ENTITY_ABSENT,      // entity missing from the immediately prior frame
+	CSP_RESET_SERVERFRAME_SKIPPED,// serverframe gap (dropped intermediate frame)
+	CSP_RESET_TELEPORT_DISP,      // displacement exceeded plausible velocity
+	CSP_RESET_INVALID_DT,         // non-positive server-time delta
+	CSP_RESET_VELOCITY_CLEARED,   // velocity cleared by another path
+	CSP_RESET_UNKNOWN             // reseeded, cause not established
+} csp_reset_reason_t;
+
 typedef struct {
 	// Previous snapshot (for velocity calc)
 	int prev_servertime;        // cl.frame.servertime of previous snapshot
@@ -55,6 +70,25 @@ typedef struct {
 	float smooth_offset[3];     // decaying visual offset vector
 	float smooth_offset_time;   // Sys_Milliseconds when offset was captured
 	qboolean smooth_active;     // decay is in progress for this entity
+
+	// Actual last displayed ghost position (for smoothing continuity).
+	// Captured at render time from the position actually sent to the
+	// renderer — NOT a reconstruction from cur_origin + velocity*horizon.
+	float last_rendered_ghost[3];
+	int   last_rendered_time;   // cls.realtime when last ghost was rendered
+	qboolean last_rendered_valid;
+	int   smooth_captured_for_frame;  // serverframe for which offset was captured
+
+	// Snapshot continuity tracking (Req 1).
+	// Presence and drop-counter deltas let us classify missing frames
+	// accurately instead of assuming a single generic reason.
+	int   prev_present;         // entity present in previous snapshot (0/1)
+	int   cur_present;          // entity present in current snapshot (0/1)
+	int   prev_dropped;         // cls.netchan.dropped at previous snapshot
+	int   cur_dropped;          // cls.netchan.dropped at current snapshot
+
+	// Last reset reason (diagnostics)
+	csp_reset_reason_t last_reset_reason;
 } csp_entity_state_t;
 
 static csp_entity_state_t csp_entities[CSP_MAX_ENTITIES];
@@ -130,7 +164,39 @@ void CL_CSP_ClearState (void)
 		VectorClear (csp_entities[i].velocity);
 		VectorClear (csp_entities[i].smooth_offset);
 		csp_entities[i].smooth_offset_time = 0;
+		csp_entities[i].smooth_active = false;
+		VectorClear (csp_entities[i].last_rendered_ghost);
+		csp_entities[i].last_rendered_time = 0;
+		csp_entities[i].last_rendered_valid = false;
+		csp_entities[i].smooth_captured_for_frame = 0;
+		csp_entities[i].prev_present = 0;
+		csp_entities[i].cur_present = 0;
+		csp_entities[i].prev_dropped = 0;
+		csp_entities[i].cur_dropped = 0;
+		csp_entities[i].last_reset_reason = CSP_RESET_NONE;
 	}
+}
+
+/*
+====================
+CL_CSP_ResetSmoothing
+
+Clear the decaying visual smoothing state for an entity.
+
+Called from every reseed path (entity absent, serverframe skipped,
+teleport displacement, invalid dt, velocity cleared) and from
+CL_CSP_ClearState. This ensures a stale smoothing offset from a
+previous movement segment is never carried across a discontinuity.
+
+The raw prediction state (velocity, origin) is NOT touched here —
+only the visual smoothing layer is reset.
+====================
+*/
+static void CL_CSP_ResetSmoothing (csp_entity_state_t *st)
+{
+	VectorClear (st->smooth_offset);
+	st->smooth_offset_time = 0;
+	st->smooth_active = false;
 }
 
 
@@ -277,6 +343,14 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 	if (st->cur_serverframe == cl.frame.serverframe)
 		return;  // already updated this frame
 
+	// Record snapshot continuity (Req 1): presence + drop counter deltas.
+	// These are recorded BEFORE the shift so prev_* reflects the prior
+	// snapshot's state.
+	st->prev_present = st->cur_present;
+	st->cur_present  = 1;
+	st->prev_dropped = st->cur_dropped;
+	st->cur_dropped  = cls.netchan.dropped;
+
 	// Shift current -> prev for velocity calc (only if we have data)
 	if (st->initialized)
 	{
@@ -309,6 +383,8 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 	{
 		st->has_velocity = false;
 		VectorClear (st->velocity);
+		CL_CSP_ResetSmoothing (st);
+		st->last_reset_reason = CSP_RESET_INVALID_DT;
 		st->cur_receive_ms = csp_snapshot_receive_ms;
 		st->cur_servertime = cl.frame.servertime;
 		st->cur_serverframe = cl.frame.serverframe;
@@ -322,6 +398,8 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 	{
 		st->has_velocity = false;
 		VectorClear (st->velocity);
+		CL_CSP_ResetSmoothing (st);
+		st->last_reset_reason = CSP_RESET_SERVERFRAME_SKIPPED;
 		VectorCopy (st->cur_origin, st->prev_origin);
 		st->prev_servertime = st->cur_servertime;
 		st->prev_serverframe = st->cur_serverframe;
@@ -349,6 +427,8 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 			// Likely teleport — zero velocity, reseed prev at current
 			st->has_velocity = false;
 			VectorClear (st->velocity);
+			CL_CSP_ResetSmoothing (st);
+			st->last_reset_reason = CSP_RESET_TELEPORT_DISP;
 			// Reseed: set prev = current (so next delta starts fresh)
 			VectorCopy (st->cur_origin, st->prev_origin);
 			st->prev_servertime = st->cur_servertime;
@@ -395,6 +475,30 @@ static void CL_CSP_UpdateEntityVelocity (centity_t *cent, int ent_num)
 	st->cur_serverframe = cl.frame.serverframe;
 	st->cur_receive_ms = csp_snapshot_receive_ms;
 	st->seen_count++;
+	st->last_reset_reason = CSP_RESET_NONE;  // successful update
+}
+
+/*
+====================
+CL_CSP_ResetReasonString
+
+Return a human-readable string for a reset reason enum value.
+Used in debug logging and diagnostics.
+====================
+*/
+static const char *CL_CSP_ResetReasonString (csp_reset_reason_t reason)
+{
+	switch (reason)
+	{
+		case CSP_RESET_NONE:                return "none";
+		case CSP_RESET_ENTITY_ABSENT:       return "entity_absent";
+		case CSP_RESET_SERVERFRAME_SKIPPED: return "serverframe_skipped";
+		case CSP_RESET_TELEPORT_DISP:       return "teleport_disp";
+		case CSP_RESET_INVALID_DT:          return "invalid_dt";
+		case CSP_RESET_VELOCITY_CLEARED:    return "velocity_cleared";
+		case CSP_RESET_UNKNOWN:             return "unknown";
+		default:                            return "unknown";
+	}
 }
 
 // ====================================================================
@@ -592,7 +696,6 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 	float horizon_ms;
 	qboolean reseeded = false, age_clamped = false;
 	const char *reseed_reason = "";
-	qboolean is_new_frame = false;
 
 	if (!cent)
 	{
@@ -622,15 +725,6 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 
 	st = &csp_entities[ent_num];
 
-	// Phase 2 smoothing — detect if this is a new frame to capture
-	// the old prediction before state is updated. This lets us compute
-	// the visual offset for decaying display of prediction jumps.
-	if (csp_smooth->value && st->has_velocity
-		&& st->cur_serverframe != cl.frame.serverframe)
-	{
-		is_new_frame = true;
-	}
-
 	// Check if entity was present in the current or previous server frame.
 	// If it was absent, reseed to clear stale velocity — the entity may have
 	// respawned or teleported while we had no snapshots.
@@ -639,23 +733,13 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 	{
 		st->has_velocity = false;
 		VectorClear (st->velocity);
+		CL_CSP_ResetSmoothing (st);
+		st->last_reset_reason = CSP_RESET_ENTITY_ABSENT;
 		st->prev_servertime = st->cur_servertime;
 		st->prev_serverframe = st->cur_serverframe;
 		VectorCopy (st->cur_origin, st->prev_origin);
 		reseeded = true;
 		reseed_reason = "entity_not_in_recent_frame";
-	}
-
-	// Phase 2 smoothing — capture old prediction BEFORE state update.
-	// At this point, st still has pre-update cur_origin/velocity
-	// from the previous frame's prediction.
-	float old_pred[3];
-	if (is_new_frame)
-	{
-		horizon_ms = CL_CSP_CalculateHorizon (st, &age_clamped);
-		old_pred[0] = st->cur_origin[0] + st->velocity[0] * (horizon_ms / 1000.0f);
-		old_pred[1] = st->cur_origin[1] + st->velocity[1] * (horizon_ms / 1000.0f);
-		old_pred[2] = st->cur_origin[2] + st->velocity[2] * (horizon_ms / 1000.0f);
 	}
 
 	// Update entity state and velocity (idempotent)
@@ -668,6 +752,8 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 		{
 			reseeded = true;
 			reseed_reason = "velocity_cleared";
+			CL_CSP_ResetSmoothing (st);
+			st->last_reset_reason = CSP_RESET_VELOCITY_CLEARED;
 		}
 	}
 
@@ -690,25 +776,39 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 	}
 
 	// Phase 2 smoothing — apply decaying visual offset to predictions.
-	// On a new snapshot: offset = prediction_before_update - prediction_after_update
-	// Each subsequent render: contribution = offset * exp(-elapsed_ms / tau)
-	// Raw diagnostic prediction is unaffected — only the draw position shifts.
+	//
+	// On a new snapshot (first render for this serverframe):
+	//   offset = last_rendered_ghost - new_predicted
+	//   This captures the actual visual jump from where the ghost was
+	//   last displayed to where it is now predicted.
+	//
+	// Each subsequent render within the same snapshot:
+	//   contribution = offset * exp(-elapsed_ms / tau)
+	//
+	// The raw diagnostic prediction (out_origin before smoothing) is
+	// unaffected — only the displayed position shifts.
+	//
+	// Req 2: uses the ACTUAL last-rendered ghost position as the
+	// reference, NOT a reconstruction from cur_origin + velocity*horizon.
 	if (csp_smooth->value && st->has_velocity)
 	{
-		if (is_new_frame)
+		// Capture the prediction jump on the first render for this serverframe
+		if (st->smooth_captured_for_frame != cl.frame.serverframe
+			&& st->last_rendered_valid)
 		{
-			// Capture the prediction jump as the initial offset
-			VectorSubtract (old_pred, out_origin, st->smooth_offset);
-			st->smooth_offset_time = cls.realtime;
+			// offset = where we last displayed - where we now predict
+			VectorSubtract (st->last_rendered_ghost, out_origin, st->smooth_offset);
+			st->smooth_offset_time = (float)cls.realtime;
 			st->smooth_active = true;
+			st->smooth_captured_for_frame = cl.frame.serverframe;
 		}
 
 		if (st->smooth_active)
 		{
-			int tau = csp_smooth_tau->value;
+			int tau = (int)csp_smooth_tau->value;
 			if (tau < 1) tau = CSP_SMOOTH_TAU_DEFAULT;
-			float elapsed = cls.realtime - st->smooth_offset_time;
-			float decay = exp(-elapsed / tau);
+			float elapsed = (float)(cls.realtime - st->smooth_offset_time);
+			float decay = expf(-elapsed / (float)tau);
 			if (decay < 0.001f)
 			{
 				// Offset has effectively decayed away
@@ -721,6 +821,12 @@ void CL_CSP_PredictEntity (centity_t *cent, int ent_num, vec3_t out_origin, vec3
 				out_origin[2] += st->smooth_offset[2] * decay;
 			}
 		}
+
+		// Record the actual displayed position for next frame's smoothing
+		// reference. This is the position that will be sent to the renderer.
+		VectorCopy (out_origin, st->last_rendered_ghost);
+		st->last_rendered_time = cls.realtime;
+		st->last_rendered_valid = true;
 	}
 
 	// Angles — use normal client interpolation
