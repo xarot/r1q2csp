@@ -2090,6 +2090,22 @@ lerp_time;*/
 					ent.backlerp = 0;
 					V_AddEntity (&ent);
 
+								// Save the complete ghost body state. The linked-weapon blocks
+								// below reuse `ent` and overwrite skin/skinnum/flags/alpha/model;
+								// we restore this snapshot afterwards so the generic EF_COLOR_SHELL
+								// pass (quad / powerup overlays) receives the original body at the
+								// predicted origin with its real model and skin.
+								VectorCopy (ent.origin, saved_origin);
+								VectorCopy (ent.angles, saved_angles);
+								saved_frame = ent.frame;
+								saved_oldframe = ent.oldframe;
+								saved_backlerp = ent.backlerp;
+								saved_skinnum = ent.skinnum;
+								saved_alpha = ent.alpha;
+								saved_flags = ent.flags;
+								saved_model = ent.model;
+								saved_skin = ent.skin;
+
 								// Linked entities (weapon/hand) at ghost position, drawn opaque
 								// and fully colored like a normal player's weapon.
 								if (s1->modelindex2)
@@ -2139,11 +2155,20 @@ lerp_time;*/
 						ent.alpha = 0;
 					}
 
-								// Restore the body model so the generic EF_COLOR_SHELL handling
-								// below (quad / power-screen color shells) renders the translucent
-								// colored shell on the body at the predicted position, exactly the
-								// way it does for a normal player.
-								ent.model = cl.model_draw[s1->modelindex];
+					// Restore the complete ghost body state so the generic
+					// EF_COLOR_SHELL pass below renders the translucent colored
+					// shell on the original body (real model + skin) at the
+					// predicted position — exactly how it renders for a normal player.
+					VectorCopy (saved_origin, ent.origin);
+					VectorCopy (saved_angles, ent.angles);
+					ent.frame = saved_frame;
+					ent.oldframe = saved_oldframe;
+					ent.backlerp = saved_backlerp;
+					ent.skinnum = saved_skinnum;
+					ent.alpha = saved_alpha;
+					ent.flags = saved_flags;
+					ent.model = saved_model;
+					ent.skin = saved_skin;
 				}
 				// Prevent generic linked-model code below from rendering a second weapon
 				// at the server position, causing gun trailing in GHOST_ONLY mode
