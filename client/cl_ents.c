@@ -2061,72 +2061,114 @@ lerp_time;*/
 
 			if (csp_enable->intvalue == CSP_GHOST_ONLY)
 			{
-				// Ghost-only: render near-solid ghost with blue shell overlay
+							// Ghost-only: render the ghost exactly like a normal player at the
+							// predicted position. The body is opaque with the original colors
+							// (no translucent/glowing hue), the weapon is drawn fully colored,
+							// and powerup shells (quad / power-screen) are applied the same way
+							// as for a normal player via the generic EF_COLOR_SHELL handling
+							// that runs after this block.
 				// Guard against NULL models during map precaching (e.g., openffa)
 				if (ent.model)
 				{
 					VectorCopy (predicted_origin, ent.origin);
 					VectorCopy (predicted_angles, ent.angles);
 
-					// Layer 1: near-solid ghost body (~90% like original player)
-					// Translucent so it's ghostly, original colors/skin preserved
-					ent.flags = RF_TRANSLUCENT;
-					ent.alpha = 0.90f;
-					// Prevent interpolation warping: anchor oldorigin to current position,
-					// disable backlerp so renderer doesn't lerp with stale data
+								// Opaque body, like a normal player: same flags logic as the
+								// normal body (flags=0 when a color shell is present since
+								// renderfx goes on the separate shell entity, otherwise
+								// renderfx goes on the body). No translucency — fully colored.
+								if (effects & EF_COLOR_SHELL)
+									ent.flags = 0;
+								else
+									ent.flags = renderfx;
+								ent.alpha = 0;
+								// Prevent interpolation warping: anchor oldorigin to current
+								// position, disable backlerp so renderer doesn't lerp w/ stale data
 					ent.oldorigin[0] = ent.origin[0];
 					ent.oldorigin[1] = ent.origin[1];
 					ent.oldorigin[2] = ent.origin[2];
 					ent.backlerp = 0;
 					V_AddEntity (&ent);
 
-					// Layer 2: faint purple shell overlay for ghost identification
-					// Purple = RF_SHELL_RED|RF_SHELL_BLUE, not used by any stock item
-					// (Blue alone would confuse with quad damage)
-					ent.flags = RF_TRANSLUCENT | RF_SHELL_RED | RF_SHELL_BLUE;
-					ent.alpha = 0.20f;
-					V_AddEntity (&ent);
-				}
-				// Linked entities (weapon/hand) also at ghost position
-				if (s1->modelindex2)
-				{
-					if (s1->modelindex2 == 255)
+								// Save the complete ghost body state. The linked-weapon blocks
+								// below reuse `ent` and overwrite skin/skinnum/flags/alpha/model;
+								// we restore this snapshot afterwards so the generic EF_COLOR_SHELL
+								// pass (quad / powerup overlays) receives the original body at the
+								// predicted origin with its real model and skin.
+								VectorCopy (ent.origin, saved_origin);
+								VectorCopy (ent.angles, saved_angles);
+								saved_frame = ent.frame;
+								saved_oldframe = ent.oldframe;
+								saved_backlerp = ent.backlerp;
+								saved_skinnum = ent.skinnum;
+								saved_alpha = ent.alpha;
+								saved_flags = ent.flags;
+								saved_model = ent.model;
+								saved_skin = ent.skin;
+
+								// Linked entities (weapon/hand) at ghost position, drawn opaque
+								// and fully colored like a normal player's weapon.
+								if (s1->modelindex2)
 					{
-						ci = &cl.clientinfo[s1->skinnum & 0xff];
-						i = (s1->skinnum >> 8);
-						if (!cl_vwep->intvalue || i > MAX_CLIENTWEAPONMODELS - 1)
-							i = 0;
-						ent.model = ci->weaponmodel[i];
-						if (!ent.model)
+									if (s1->modelindex2 == 255)
 						{
-							if (i != 0)
-								ent.model = ci->weaponmodel[0];
+										ci = &cl.clientinfo[s1->skinnum & 0xff];
+										i = (s1->skinnum >> 8);
+										if (!cl_vwep->intvalue || i > MAX_CLIENTWEAPONMODELS - 1)
+											i = 0;
+										ent.model = ci->weaponmodel[i];
 							if (!ent.model)
-								ent.model = cl.baseclientinfo.weaponmodel[0];
+										{
+											if (i != 0)
+												ent.model = ci->weaponmodel[0];
+											if (!ent.model)
+												ent.model = cl.baseclientinfo.weaponmodel[0];
+										}
+										// Only add entity if we have a valid model —
+										// during map loading (e.g., openffa), weapon
+										// models may not be precached yet
+										if (ent.model)
+										{
+											// Never draw the weapon with the player's custom skin
+											// (mirrors the generic linked-model reset below)
+											ent.skin = NULL;
+											ent.skinnum = 0;
+											ent.flags = 0;
+											ent.alpha = 0;
+											V_AddEntity (&ent);
+										}
 						}
-						// Only add entity if we have a valid model —
-						// during map loading (e.g., openffa), weapon
-						// models may not be precached yet
-						if (ent.model)
+									else
 						{
-							ent.flags = 0;
-							V_AddEntity (&ent);
-							ent.flags = 0;
-							ent.alpha = 0;
-						}
-					}
-					else
-					{
-						ent.model = cl.model_draw[s1->modelindex2];
-						// Guard against NULL models during map precaching
-						if (ent.model)
-						{
-							ent.flags = 0;
-							V_AddEntity (&ent);
+										ent.model = cl.model_draw[s1->modelindex2];
+										// Guard against NULL models during map precaching
+										if (ent.model)
+										{
+											ent.skin = NULL;
+											ent.skinnum = 0;
+											ent.flags = 0;
+											ent.alpha = 0;
+											V_AddEntity (&ent);
+										}
 						}
 						ent.flags = 0;
 						ent.alpha = 0;
 					}
+
+					// Restore the complete ghost body state so the generic
+					// EF_COLOR_SHELL pass below renders the translucent colored
+					// shell on the original body (real model + skin) at the
+					// predicted position — exactly how it renders for a normal player.
+					VectorCopy (saved_origin, ent.origin);
+					VectorCopy (saved_angles, ent.angles);
+					ent.frame = saved_frame;
+					ent.oldframe = saved_oldframe;
+					ent.backlerp = saved_backlerp;
+					ent.skinnum = saved_skinnum;
+					ent.alpha = saved_alpha;
+					ent.flags = saved_flags;
+					ent.model = saved_model;
+					ent.skin = saved_skin;
 				}
 				// Prevent generic linked-model code below from rendering a second weapon
 				// at the server position, causing gun trailing in GHOST_ONLY mode
