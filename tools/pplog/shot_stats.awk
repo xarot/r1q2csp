@@ -1,5 +1,5 @@
 # summarise a player prediction shot log
-# usage: awk -f pplog_stats.awk file.log
+# usage: awk -f shot_stats.awk file.log
 
 function val(key,   i, k) {
 	k = key "="
