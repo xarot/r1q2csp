@@ -255,7 +255,7 @@ void CL_PP_Init (void)
 {
 	cl_predict_players = Cvar_Get ("cl_predict_players", "1", CVAR_ARCHIVE);
 	cl_predict_players_maxping = Cvar_Get ("cl_predict_players_maxping", "300", CVAR_ARCHIVE);
-	cl_predict_players_smooth = Cvar_Get ("cl_predict_players_smooth", "70", CVAR_ARCHIVE);
+	cl_predict_players_smooth = Cvar_Get ("cl_predict_players_smooth", "30", CVAR_ARCHIVE);
 	cl_predict_players_offset = Cvar_Get ("cl_predict_players_offset", "0", CVAR_ARCHIVE);
 	cl_predict_players_debug = Cvar_Get ("cl_predict_players_debug", "0", 0);
 	cl_predict_players_log = Cvar_Get ("cl_predict_players_log", "0", 0);
@@ -1476,7 +1476,8 @@ static void PP_LogOpen (void)
 		"# All positions are world units, x y z. A player is 32 wide and 56 tall.\n"
 		"#\n"
 		"# SHOT    one per shot the server confirmed (muzzle flash of our own entity)\n"
-		"#   mz        muzzle flash id (1 machinegun, 2 shotgun, 3 chaingun, 6 railgun, 13 super shotgun, ...)\n"
+		"#   mz        muzzle flash id (0 blaster, 1 machinegun, 2 shotgun, 3-5 chaingun, 6 railgun,\n"
+		"#             7 rocket, 8 grenade launcher, 13 super shotgun, 14 hyperblaster)\n"
 		"#   click     1 = fired by a fresh button press, 0 = button was held\n"
 		"#   cmdage    ms between sending the command that fired and hearing about the shot\n"
 		"#   predict   cl_predict_players at the time, with rtt / lead / smooth / offset used\n"
