@@ -2,8 +2,6 @@
 
 #include "client.h"
 
-localent_t cl_localents[MAX_LOCAL_ENTS];
-
 int	localent_count = 0;
 
 cvar_t	*cl_lents;

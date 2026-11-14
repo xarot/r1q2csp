@@ -2366,9 +2366,9 @@ void Sys_SetFPU (byte bits)
 		mov ecx, eax
 		fnstcw word ptr [eax]
 		mov eax, [eax]
-		and ah, 0f0h          ; clear CW bits 8-11 (PC + rounding/exception masks)
-		or  ah, bits          ; set CW bits 8-11 from parameter
-		and ah, 0fch          ; clear PC (CW bits 8-9) → force 24-bit single precision
+		and ah, 0f0h          ; clear precision and rounding control (CW bits 8-11)
+		or  ah, bits          ; apply sys_fpu_bits
+		and ah, 0fch          ; force precision control to 00b = 24 bit, as in 3.20
 		mov [ecx], eax
 		fldcw word ptr [ecx]
 		pop eax
@@ -2427,6 +2427,51 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLin
 	int				spins;
 
 	badspins = goodspins = 0;
+
+	// With display scaling above 100%, Windows otherwise pretends the screen
+	// is smaller and stretches our window, so a 3840x2160 mode would neither
+	// fit nor be sharp. Ask for real pixels.
+	//
+	// It has to be per-monitor awareness. With the older system-wide kind,
+	// Windows remembers the desktop's scaling (say 150%), and when we switch
+	// to a fullscreen mode like 800x600, where the scaling drops to 100%, it
+	// shrinks our window by that factor: the game ends up in a corner.
+	{
+		HMODULE	user32 = GetModuleHandle ("user32.dll");
+		HMODULE	shcore;
+		BOOL	(WINAPI *setContext)(HANDLE) = NULL;
+		HRESULT	(WINAPI *setAwareness)(int) = NULL;
+		BOOL	(WINAPI *setAware)(void) = NULL;
+		BOOL	done = FALSE;
+
+		// Windows 10 1703 and later: per monitor v2 (-4), else per monitor (-3)
+		if (user32)
+			setContext = (BOOL (WINAPI *)(HANDLE))GetProcAddress (user32, "SetProcessDpiAwarenessContext");
+
+		if (setContext)
+			done = setContext ((HANDLE)(LONG_PTR)-4) || setContext ((HANDLE)(LONG_PTR)-3);
+
+		// Windows 8.1: PROCESS_PER_MONITOR_DPI_AWARE
+		if (!done)
+		{
+			shcore = LoadLibrary ("shcore.dll");
+			if (shcore)
+				setAwareness = (HRESULT (WINAPI *)(int))GetProcAddress (shcore, "SetProcessDpiAwareness");
+
+			if (setAwareness)
+				done = (setAwareness (2) == S_OK);
+		}
+
+		// Vista / 7: all there is
+		if (!done)
+		{
+			if (user32)
+				setAware = (BOOL (WINAPI *)(void))GetProcAddress (user32, "SetProcessDPIAware");
+
+			if (setAware)
+				setAware ();
+		}
+	}
 
     /* previous instances do not exist in Win32 */
     if (hPrevInstance)

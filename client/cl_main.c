@@ -156,17 +156,6 @@ cvar_t	*cl_updaterate;
 
 cvar_t	*cl_proxy;
 
-// Client-Side Prediction (CSP) - ghost prediction for high-latency play
-cvar_t *csp_enable;
-cvar_t *csp_latency_ms;
-cvar_t *csp_mult;
-cvar_t *csp_horizon_ms;       // fixed horizon override in ms (0 = auto)
-cvar_t *csp_horizon_bias;     // additional horizon bias in ms
-cvar_t *csp_smooth;           // 0=off, 1=enable decaying visual smoothing
-cvar_t *csp_smooth_tau;       // smoothing time constant in ms (default 80)
-cvar_t *csp_debug;            // 0=off, 1=console, 2=file (path in csp_debug_file)
-cvar_t *csp_debug_file;       // log file path for csp_debug 2
-
 #ifdef NO_SERVER
 cvar_t	*allow_download;
 cvar_t *allow_download_players;
@@ -1156,7 +1145,6 @@ void CL_ClearState (void)
 	S_StopAllSounds ();
 	CL_ClearEffects ();
 	CL_ClearTEnts ();
-	CL_CSP_ClearState ();
 
 // wipe the entire cl structure
 	memset (&cl, 0, sizeof(cl));
@@ -1168,6 +1156,8 @@ void CL_ClearState (void)
 
 	//r1: local ents clear
 	Le_Reset ();
+
+	CL_PP_Reset ();
 
 	//r1: reset
 	cl.maxclients = MAX_CLIENTS;
@@ -2109,28 +2099,18 @@ void CL_ReadPackets (void)
 
 		if (CL_ParseServerMessage ())
 		{
-		// RTT sampling is decoupled from netgraph visualization (Req 3).
-		// Called unconditionally after server message parse so that
-		// netgraph settings cannot disable RTT updates.
-		CL_CSP_SampleRTT ();
+			CL_AddNetgraph ();
 
-	CL_AddNetgraph ();
+			if (scr_sizegraph->intvalue)
+				CL_AddSizegraph ();
+		}
 
-	if (scr_sizegraph->intvalue)
-		CL_AddSizegraph ();
-	}
-
-	// Phase E3: Snapshot membership lifecycle — detect entities absent
-	// from the current authoritative snapshot and reseed their state.
-	// Called UNCONDITIONALLY (outside the if-block above) because
-	// CL_ParseServerMessage() returns false for svc_playerupdate (delta)
-	// messages even when gotFrame is true. The function self-guards on
-	// csp_authoritative_frame_parsed (set only by CL_CSP_ParseFrameNotify,
-	// called exclusively from CL_ParseFrame for real svc_frame messages),
-	// so it is a no-op for delta-only messages. This ensures every
-	// authoritative svc_frame gets membership processing regardless of
-	// the general server-message return value.
-	CL_CSP_ProcessSnapshot ();
+		//
+		// we don't know if it is ok to save a demo message until
+		// after we have parsed the frame
+		//
+		if (cls.demorecording && !cls.demowaiting && cls.serverProtocol == PROTOCOL_ORIGINAL)
+			CL_WriteDemoMessageFull ();
 	}
 
 	//
@@ -3560,6 +3540,7 @@ void CL_InitLocal (void)
 	cl_noskins = Cvar_Get ("cl_noskins", "0", 0);
 //	cl_autoskins = Cvar_Get ("cl_autoskins", "0", 0);
 	cl_predict = Cvar_Get ("cl_predict", "1", 0);
+	CL_PP_Init ();
 	cl_backlerp = Cvar_Get ("cl_backlerp", "1", 0);
 //	cl_minfps = Cvar_Get ("cl_minfps", "5", 0);
 
@@ -3679,20 +3660,6 @@ void CL_InitLocal (void)
 
 	cl_proxy = Cvar_Get ("cl_proxy", "", 0);
 
-	// CSP (Client-Side Prediction) - ghost prediction for high-latency play
-	csp_enable = Cvar_Get ("csp_enable", "1", 0);
-	csp_enable->changed = CL_CSP_ValueChanged;
-	csp_latency_ms = Cvar_Get ("csp_latency_ms", "0", 0);
-	csp_mult = Cvar_Get ("csp_mult", "1.0", 0);
-	csp_horizon_ms = Cvar_Get ("csp_horizon_ms", "0", 0);      // 0 = auto
-	csp_horizon_bias = Cvar_Get ("csp_horizon_bias", "0", 0);  // additional ms bias
-	csp_smooth = Cvar_Get ("csp_smooth", "0", 0);              // 0=off, 1=decaying smooth
-	csp_smooth->changed = CL_CSP_SmoothChanged;
-	csp_smooth_tau = Cvar_Get ("csp_smooth_tau", "80", 0);     // smoothing time constant ms
-	csp_debug = Cvar_Get ("csp_debug", "0", 0);               // 0=off, 1=console, 2=file
-	csp_debug_file = Cvar_Get ("csp_debug_file", "csp_debug.log", 0);  // log filename
-
-	//
 	//haxx
 	glVersion = Cvar_VariableString ("cl_version");
 	(Cvar_ForceSet ("cl_version", va(PRODUCTNAME " " VERSION "; %s", glVersion[0] ? glVersion : "unknown renderer" )))->changed = version_update;

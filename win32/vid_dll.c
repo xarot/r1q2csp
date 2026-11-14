@@ -673,13 +673,59 @@ vidmode_t vid_modes[] =
 	{1280,	1024},
 	{1440,	900},
 	{1680,	1050},
-	{2560,	1920},	
+	{2560,	1920},
+
+	// widescreen. new modes go at the end so existing gl_mode numbers keep
+	// their meaning. keep in sync with the list in vid_menu.c.
+	{1280,	720},
+	{1366,	768},
+	{1600,	900},
+	{1920,	1080},
+	{1920,	1200},
+	{2560,	1080},
+	{2560,	1440},
+	{2560,	1600},
+	{3440,	1440},
+	{3840,	1600},
+	{3840,	2160},
+	{5120,	1440},
+	{0,		0},		// whatever the desktop is set to
 };
 
 qboolean EXPORT VID_GetModeInfo( unsigned int *width, unsigned int *height, int mode )
 {
+	static int	desktop_width, desktop_height;
+
 	if ( mode < 0 || mode >= VID_NUM_MODES )
 		return false;
+
+	// remember the desktop size the first time we are asked, which is before
+	// we have changed the display mode ourselves
+	if (!desktop_width)
+	{
+		DEVMODE		dm;
+
+		memset (&dm, 0, sizeof(dm));
+		dm.dmSize = sizeof(dm);
+
+		if (EnumDisplaySettings (NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmPelsWidth && dm.dmPelsHeight)
+		{
+			desktop_width = (int)dm.dmPelsWidth;
+			desktop_height = (int)dm.dmPelsHeight;
+		}
+		else
+		{
+			desktop_width = GetSystemMetrics (SM_CXSCREEN);
+			desktop_height = GetSystemMetrics (SM_CYSCREEN);
+		}
+	}
+
+	if (!vid_modes[mode].width)
+	{
+		*width  = desktop_width;
+		*height = desktop_height;
+		return true;
+	}
 
 	*width  = vid_modes[mode].width;
 	*height = vid_modes[mode].height;
@@ -789,7 +835,10 @@ qboolean VID_LoadRefresh( char *name, char *errstr )
 	WNDCLASS		wc;
 	GetRefAPI_t		GetRefAPI;
 	GetExtraAPI_t	GetExtraAPI;
-	
+
+	// a renderer that can scale 2D drawing sets this back to 1 when it starts
+	Cvar_Set ("r_drawscale_ok", "0");
+
 	if ( reflib_active )
 	{
 		closing_reflib = true;

@@ -52,6 +52,16 @@ extern	int			crosshair_width, crosshair_height;
 void SCR_AddDirtyPoint (int x, int y);
 void SCR_DirtyScreen (void);
 
+extern	cvar_t		*scr_hudscale;
+extern	cvar_t		*scr_scorescale;
+extern	cvar_t		*scr_conscale;
+extern	cvar_t		*scr_crosshairscale;
+
+float SCR_GetScale (cvar_t *var, qboolean needRenderer);
+void SCR_BeginScale (cvar_t *var);
+void SCR_EndScale (void);
+int SCR_ConsoleWidth (void);
+
 //
 // scr_cin.c
 //

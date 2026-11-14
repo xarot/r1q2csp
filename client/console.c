@@ -369,7 +369,7 @@ void Con_CheckResize (void)
 {
 	int		width;
 
-	width = (viddef.width >> 3) - 2;
+	width = (SCR_ConsoleWidth () >> 3) - 2;
 
 	if (width == con.linewidth)
 		return;
@@ -706,7 +706,7 @@ void Con_DrawConsole (float frac)
 	char			*text;
 	int				row;
 	int				lines;
-	char			version[24];
+	char			version[64];
 	char			dlbar[1024];
 
 	time_t			t;

@@ -1,143 +1,214 @@
-# r1q2 (csp mod)
+# R1Q2 (mod)
 
-A fork of [R1Q2](http://r1ch.net/r1q2/) — R1CH's enhanced Quake II client — with **client-side prediction (CSP)** for reduced perceived latency.
+R1CH's R1Q2 client for Quake II, made to build with Visual Studio 2022, with a
+few additions for playing on modern displays and on servers with some ping.
+It reports itself as `R1Q2 (mod) b8012-premod` and works with any normal
+Quake II / R1Q2 server; nothing is needed on the server side.
 
-> **This project is a fork of R1CH's R1Q2.** All original engine code, architecture, and design are R1CH's work. See [`readme.txt`](readme.txt) for the original R1Q2 documentation. This fork adds the CSP subsystem and associated diagnostics; everything else is upstream.
+Additions:
 
-## Why this fork exists
+- [Prediction of other players](#player-prediction) (off by default)
+- [Widescreen video modes and automatic FOV](#video-modes-and-fov)
+- [Scaling of the HUD, scores, console and crosshair](#hud-scaling)
+- 24-bit FPU precision fix, so movement feels the same as in the original builds
 
-We've been playing Quake II since it shipped in December 1997. The community that built those late-night frag-fests is getting smaller every year — people are aging, moving on, or simply gone. What remains is a scattered group of players spread across time zones: someone in Stockholm with 5 ms ping, someone in Toronto with 150 ms, someone in Sydney with 300 ms. The game was designed for a LAN room full of friends, not for a global lobby where the 300 ms player is always the one missing shots while the 5 ms player looks like a ghost.
+R1CH's original notes are in `readme.txt` and `r1q2.txt`. Build instructions
+are in `BUILDING-VS2022.md`.
 
-Modern game clients solved this with **client-side prediction**: the client guesses where things will be so you don't have to wait for the server to catch up. Quake II already does this for *your own movement* — try `cl_predict 1` and you'll feel the difference immediately. But that's all. The moment you raise your railgun at an opponent, the prediction stops. You're still aiming at where the server *last told* the enemy was, which at 200 ms round-trip can be a full second old.
+## Installing
 
-**Wayne Gretzky said: "I skate to where the puck is going to be, not where it has been."** That's what high-pingers need to do everyday by taking a lot of advance in their aiming. What we aim for with this fork, is that we could switch from crosshair advance to client-side advance. Then we could aim directly at the player instead. 
+Build the `Release | x86` configuration and copy these from
+`build\bin\Release\` into your Quake II folder:
 
-### How it works (the short version)
+| File           | Needed for                                   |
+|----------------|----------------------------------------------|
+| `r1q2.exe`     | everything                                   |
+| `ref_r1gl.dll` | HUD scaling (the old DLL works, but unscaled) |
+| `gamex86.dll`  | only for hosting games; goes into `baseq2\`  |
 
-Think of it like watching a car drive down a highway through a slightly delayed video feed. You see the car at position A, then a moment later at position B. Your brain instantly knows: "It's moving from A to B, so right now it's probably a bit past B." You don't wait for the next frame — you *extrapolate*.
+## Player prediction
 
-That's what CSP does for every remote player:
+### What it does
 
-1. **Measure the delay** — how old the latest server snapshot is, plus the round-trip time.
-2. **Estimate the velocity** — how far the entity moved between two snapshots, divided by the time that took.
-3. **Project forward** — last known position + velocity × delay = where the entity *should be right now*.
-4. **Render a ghost** — that predicted position is drawn as a translucent overlay on top of the server-authoritative model.
+A Quake II server sends the positions of other players ten times a second and
+does not compensate for lag. The client normally shows other players slightly
+in the past, and your shot takes your ping to reach the server. So to hit a
+moving player you have to aim ahead of them by roughly
 
-**Where do you aim?** At the ghost, not the solid model. The solid model is where the server says the enemy *was*. The ghost is where the client believes the enemy *is*. At 5 ms ping the two are nearly identical. At 250 ms ping the ghost can be several meters ahead — and that's the difference between a clean headshot and a spray into empty air.
+    your ping + 100 ms
 
-**The goal: make a 250 ms connection feel like 0 ms, so that Stockholm, Toronto, and Sydney can frag each other in the same room.**
+With prediction on, the client instead draws other players where it expects
+them to be when your shot arrives. It takes the movement seen in the latest
+server updates and runs it forward: along the ground, up and down stairs, with
+gravity while airborne, riding lifts, and stopping at walls. Your ping is
+measured automatically all the time, so nothing has to be entered for it.
 
----
+The forecast can only assume that a player keeps doing what they are doing.
+Someone running or flying in a straight line is drawn in the right place.
+Someone who changes direction is drawn wrong until the next server update
+shows the change. The further ahead the client has to guess, the more often
+that happens, and that is what the settings below trade off.
 
-## What is CSP?
+### Settings
 
-CSP (Client-Side Prediction) renders a **ghost entity** at a predicted future position for each remote player, compensating for network latency. The server's authoritative position is still used for hit detection and game logic — CSP only affects what you *see*.
+All of them are in the menu under **Multiplayer > Player prediction**, with a
+short explanation shown for the selected item, and can also be set in the
+console. They are saved in your config.
 
-### Prediction model
+| Menu item             | Cvar                         | Default | Meaning |
+|-----------------------|------------------------------|---------|---------|
+| Predict other players | `cl_predict_players`         | `0`     | `1` turns prediction on. |
+| Ping compensation     | `cl_predict_players_maxping` | `50`    | How many milliseconds of your ping are compensated at most. |
+| Smoothing             | `cl_predict_players_smooth`  | `30`    | Time in milliseconds over which a correction is blended in. |
+| Fine tuning           | `cl_predict_players_offset`  | `0`     | Milliseconds added to (or, negative, taken from) the measured ping. |
 
-```
-predicted = cur_origin + velocity × (horizon / 1000)
+**Ping compensation** decides how far ahead the client guesses. The delay of
+the server updates (about 100 ms) is always compensated; on top of that comes
+your ping, up to this limit. What is left over you still lead yourself:
 
-horizon   = snapshot_age + (RTT × csp_mult / 2) + csp_horizon_bias
-velocity  = (cur_origin − prev_origin) / Δservertime
-```
+    lead left for you = your ping - ping compensation   (never below 0)
 
-The ghost is rendered as a translucent overlay on top of the server-authoritative entity, so you can see both the "true" position and the predicted position simultaneously.
+| Your ping | Setting | Lead left for you | Lead with prediction off | Model in the right place |
+|-----------|---------|-------------------|--------------------------|--------------------------|
+| 50 ms     | 50      | none              | 150 ms                   | about 85%                |
+| 100 ms    | 50      | 50 ms             | 200 ms                   | about 85%                |
+| 100 ms    | 100     | none              | 200 ms                   | about 65%                |
+| 150 ms    | 0       | 150 ms            | 250 ms                   | about 99%                |
+| 150 ms    | 50      | 100 ms            | 250 ms                   | about 85%                |
+| 150 ms    | 75      | 75 ms             | 250 ms                   | about 75%                |
+| 150 ms    | 100     | 50 ms             | 250 ms                   | about 65%                |
+| 150 ms    | 150     | none              | 250 ms                   | about 50%                |
 
----
+A higher value means less leading, but more guessing. The last column depends
+only on how much ping is actually compensated (your ping or the setting,
+whichever is lower):
 
-## CSP Cvars
+| Ping compensated | Model in the right place | Average distance from the real position |
+|------------------|--------------------------|------------------------------------------|
+| 0 ms             | about 99%                | 4 units                                  |
+| 50 ms            | about 85%                | 8 units                                  |
+| 75 ms            | about 75%                | 11 units                                 |
+| 100 ms           | about 65%                | 14 units                                 |
+| 150 ms           | about 50%                | 20 units                                 |
+| 200 ms           | about 40%                | 29 units                                 |
 
-| Cvar | Default | Description |
-|------|---------|-------------|
-| `csp_enable` | `1` | `0` = off, `1` = ghost + both, `2` = ghost only |
-| `csp_latency_ms` | `0` | Manual latency override in ms (0 = auto-detect via RTT) |
-| `csp_mult` | `1.0` | Multiplier applied to RTT/2 in the horizon calculation |
-| `csp_horizon_ms` | `0` | Fixed horizon override in ms (0 = auto) |
-| `csp_horizon_bias` | `0` | Additional bias added to horizon (ms) |
-| `csp_smooth` | `0` | Enable exponential smoothing of the ghost offset |
-| `csp_smooth_tau` | `80` | Smoothing time constant (ms) |
-| `csp_debug` | `0` | Enable per-frame debug logging |
-| `csp_debug_file` | `csp_debug.log` | Output file for debug logs |
+"In the right place" means within 16 units of where the player really was,
+which is half the width of a player (32 units). The numbers come from replaying
+the recorded movement of every player in a logged free-for-all game (about
+4,000 samples), so take them as a rough guide: they will be better against
+players who move steadily and worse in close fights. With prediction off the
+model is never in the right place for a moving player, which is why you lead.
 
-### Quick start
+If your ping is at or below the setting, raising it further changes nothing.
+Good starting points:
 
-```cfg
-// In autoexec.cfg — CSP is on by default
-set csp_enable 1
-set csp_debug 1          // enable logging while testing
-set csp_debug_file "csp_debug.log"
-```
+- ping up to about 60: leave it at 50, everything is compensated;
+- higher ping: start at 50 and get used to the shorter lead, then try 75 or
+  100. Setting it to your full ping removes the lead completely, but players
+  who dodge will often not be where they are drawn.
 
----
+**Smoothing** applies when a new server update shows that the forecast was
+wrong. Instead of jumping to the corrected position, the model slides there
+over this time. Low values are more accurate but look jumpier when a player
+dodges; high values look smoother, but the model spends more time in the
+wrong place. `0` turns it off. Values much above 60 make players noticeably
+harder to hit.
 
-## Build (Windows / VS2022)
+**Fine tuning** is for the case where a player running in a straight line is
+consistently drawn too far back or too far ahead. Raise it if you still have
+to lead such a player, lower it if your shots pass in front of them. It is
+normally left at 0.
 
-**Prerequisites:**
-- Visual Studio 2022 (Community or higher) with "Desktop development with C++"
-- [vcpkg](https://github.com/microsoft/vcpkg) at `C:\vcpkg` (triplet: `x86-windows-static-md`)
-- Dependencies: `zlib`, `libpng`, `libjpeg-turbo` (installed via `vcpkg.json`)
+### Why not simply compensate the whole ping?
 
-**Build (x86 / Win32):**
+Because the client would have to know what the other player is going to do
+before they have done it.
 
-```bat
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x86
-msbuild r1q2.sln /p:Configuration=Release /p:Platform=x86 /m /v:minimal /nologo
-```
+Think of throwing a ball to someone who is running. If the ball is in the air
+for a blink of an eye, you throw it at them and it arrives. If it is in the
+air for a quarter of a second, you have to throw it to where they will be, and
+that only works if they keep running the same way. If they stop or turn while
+the ball is in the air, it lands where they would have been.
 
-Output: `build\bin\Release\r1q2.exe`
+Prediction is the client making that guess for you. With a ping of 150 ms it
+has to guess about a quarter of a second ahead (the 100 ms update delay plus
+your ping). A player at full speed covers about 75 units in that time, more
+than two body widths, and a good player changes direction several times a
+second. The key press that makes them turn has not happened yet when the
+client draws the picture, so no amount of cleverness can show it. In logged
+games a guess that far ahead was right only about half of the time.
 
-> **Note:** The solution targets **Win32 (x86)**, not x64. This is intentional — the engine uses IA32/x87 math paths.
+A short guess is right nearly every time, because nobody can change course
+much in a tenth of a second. So the practical choice is between two things:
 
----
+- compensate everything: you aim straight at the model, but it is often in
+  the wrong place when a player dodges, and you cannot tell when;
+- compensate part of it: the model is where the player really will be most of
+  the time, and you lead the rest yourself, using your own judgement of what
+  that player is about to do. People are better at that part than a formula.
 
-## Project structure
+The only real cure for the whole delay is lag compensation on the server,
+where the server rewinds players to what you saw when you fired. Quake II
+servers do not do that, and a client cannot add it.
 
-```
-r1q2csp/
-├── client/
-│   ├── cl_csp.c          # CSP prediction, ghost rendering, diagnostics
-│   ├── cl_csp.h          # CSP public interface
-│   ├── cl_ents.c         # Entity parsing (CSP frame-validation hooks)
-│   ├── cl_main.c         # Client main (CSP cvar registration)
-│   └── ...
-├── qcommon/
-│   └── qcommon.h         # Shared defines (version string, product name)
-├── game/                 # Game logic DLL (unmodified from upstream)
-├── ref_gl/               # R1GL renderer (unmodified from upstream)
-├── server/               # Dedicated server (unmodified from upstream)
-├── build.h               # Build number (8012)
-├── r1q2.sln              # VS2022 solution
-└── vcpkg.json            # vcpkg dependency manifest
-```
+### What to expect
 
----
+- Hitscan weapons (machinegun, chaingun, railgun, shotguns) benefit the most.
+  Rockets, grenades and blaster bolts still need leading for their flight time.
+- Prediction helps most against players who are running, falling or flying
+  on a steady course, and least in close fights with a lot of dodging.
+- It makes no difference to how other players see you, or to what the server
+  counts as a hit. It only changes where the client draws other players.
+- `cl_async 0` and `cl_async 1` behave the same.
 
-## Versioning
+### Diagnostics
 
-| Tag | Description |
-|-----|-------------|
-| `v0.1-vanilla` | Clean fork of upstream R1Q2 b8012, VS2022 build |
-| `v0.2-csp` | Initial CSP port (ghost rendering, basic prediction) |
-| `v0.3-csp` | Full CSP: validated frame gating, snapshot lifecycle, RTT decoupling, diagnostics |
+These are not saved in the config.
 
-The client reports its version as **`r1q2 (csp mod) b8012`** in the console and via `!versions`.
+| Cvar                           | Meaning |
+|--------------------------------|---------|
+| `cl_predict_players_debug -1`  | Prints the current lead and ping estimate now and then. |
+| `cl_predict_players_debug -2`  | Accuracy meter: compares earlier forecasts with where players really ended up and prints a summary. |
+| `cl_predict_players_debug N`   | Prints details for the player with entity number N. |
+| `cl_predict_players_log 1`     | Writes a log of every shot you fire to `<gamedir>\pplog\pp_<date>_<time>.log`: where you aimed, where each nearby player was drawn, where they really were, and whether the shot hit. It also records every player's movement each server frame. |
 
----
+The header of each log file explains its fields. `tools\pplog\` has two awk
+scripts that summarise a log: `shot_stats.awk` (hits and misses by cause) and
+`movement_replay.awk` (how well different forecast lengths would have done on
+the recorded movement).
 
-## Attribution & licensing
+## Video modes and FOV
 
-- **R1Q2 engine** — Copyright R1CH (r1ch.net). All original client, server, renderer, and game code.
-- **CSP subsystem** (`cl_csp.c`, `cl_csp.h`, and related hooks) — Added by this fork.
-- **Quake II** — Copyright id Software. R1Q2 is a non-commercial modification.
+Added to the video menu, and usable as `gl_mode`:
 
-This fork is provided as-is, for non-commercial use, in the spirit of the original R1Q2 project.
+| Mode | Resolution | Mode | Resolution |
+|------|------------|------|------------|
+| 15   | 1280x720   | 22   | 2560x1600  |
+| 16   | 1366x768   | 23   | 3440x1440  |
+| 17   | 1600x900   | 24   | 3840x1600  |
+| 18   | 1920x1080  | 25   | 3840x2160  |
+| 19   | 1920x1200  | 26   | 5120x1440  |
+| 20   | 2560x1080  | 27   | desktop resolution |
+| 21   | 2560x1440  |      |            |
 
----
+`cl_widescreen_fov` (default `1`) widens the view on wide screens so that the
+picture keeps the same height as on a 4:3 screen and shows more at the sides.
+`fov` then means the 4:3 value, so `fov 90` looks the way it always did. Set
+`cl_widescreen_fov 0` to have `fov` used exactly as given.
 
-## Links
+## HUD scaling
 
-- Original R1Q2: [http://r1ch.net/r1q2/](http://r1ch.net/r1q2/)
-- R1Q2 forum: [http://r1ch.net/forum/](http://r1ch.net/forum/)
-- R1GL renderer: [http://r1ch.net/stuff/r1gl/](http://r1ch.net/stuff/r1gl/)
-- This fork: [https://github.com/xarot/r1q2csp](https://github.com/xarot/r1q2csp)
+Each of these takes a whole-number factor. `0` (the default) picks one
+automatically from the screen height (1 below 1080 lines, 2 at 1080, 4 at
+2160); `1` is the original size.
+
+| Cvar                 | Scales |
+|----------------------|--------|
+| `scr_hudscale`       | status bar (health, ammo, armour) and centre-printed text |
+| `scr_scorescale`     | scoreboard, other server layouts and the inventory |
+| `scr_conscale`       | console and the chat HUD |
+| `scr_crosshairscale` | crosshair |
+
+Scaling needs the `ref_r1gl.dll` from this build. With another renderer
+everything is drawn at the original size, except the crosshair, which scales
+with any renderer.

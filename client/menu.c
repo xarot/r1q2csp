@@ -506,6 +506,194 @@ static menuframework_s	s_multiplayer_menu;
 static menuaction_s		s_join_network_server_action;
 static menuaction_s		s_start_network_server_action;
 static menuaction_s		s_player_setup_action;
+static menuaction_s		s_player_prediction_action;
+
+/*
+=======================================================================
+
+PLAYER PREDICTION MENU (cl_predict_players*)
+
+=======================================================================
+*/
+#define PP_MENU_STEP	5		//milliseconds per slider notch
+
+static menuframework_s	s_prediction_menu;
+static menulist_s		s_prediction_enable_box;
+static menuslider_s		s_prediction_maxping_slider;
+static menuslider_s		s_prediction_smooth_slider;
+static menuslider_s		s_prediction_offset_slider;
+
+//explanation shown under the menu for the item at the cursor
+static const char *prediction_help[4][4] =
+{
+	{
+		"Draws other players where they will be",
+		"when your shot reaches the server, so",
+		"you can aim straight at them instead",
+		"of leading. Best against steady movers."
+	},
+	{
+		"How much of your ping is compensated.",
+		"0 = only the server frame delay. Higher",
+		"needs less leading but guesses further",
+		"ahead, so dodging players are missed."
+	},
+	{
+		"Time used to blend out corrections when",
+		"a player changes direction. Low = more",
+		"accurate but jumpier, high = smoother",
+		"but the model lags behind. 0 = off."
+	},
+	{
+		"Added to the measured ping. Raise it if",
+		"you still have to lead a player running",
+		"straight, lower it if your shots land",
+		"ahead of them. Normally left at 0."
+	}
+};
+
+static void PredictionEnableFunc( void *unused )
+{
+	Cvar_SetValue( "cl_predict_players", (float)s_prediction_enable_box.curvalue );
+}
+
+static void PredictionMaxPingFunc( void *unused )
+{
+	Cvar_SetValue( "cl_predict_players_maxping", s_prediction_maxping_slider.curvalue * PP_MENU_STEP );
+}
+
+static void PredictionSmoothFunc( void *unused )
+{
+	Cvar_SetValue( "cl_predict_players_smooth", s_prediction_smooth_slider.curvalue * PP_MENU_STEP );
+}
+
+static void PredictionOffsetFunc( void *unused )
+{
+	Cvar_SetValue( "cl_predict_players_offset", s_prediction_offset_slider.curvalue * PP_MENU_STEP );
+}
+
+static float Prediction_SliderValue( const char *cvar, menuslider_s *s )
+{
+	float	v;
+
+	v = (float)floor( Cvar_VariableValue( cvar ) / PP_MENU_STEP + 0.5f );
+
+	if (v < s->minvalue)
+		v = s->minvalue;
+	else if (v > s->maxvalue)
+		v = s->maxvalue;
+
+	return v;
+}
+
+static void Prediction_MenuInit( void )
+{
+	static const char *yesno_names[] =
+	{
+		"no",
+		"yes",
+		0
+	};
+
+	s_prediction_menu.x = viddef.width / 2 + 24;
+	s_prediction_menu.y = viddef.height / 2 - 58;
+	s_prediction_menu.nitems = 0;
+
+	s_prediction_enable_box.generic.type	= MTYPE_SPINCONTROL;
+	s_prediction_enable_box.generic.x		= 0;
+	s_prediction_enable_box.generic.y		= 0;
+	s_prediction_enable_box.generic.name	= "predict other players";
+	s_prediction_enable_box.generic.callback = PredictionEnableFunc;
+	s_prediction_enable_box.generic.statusbar = "cl_predict_players";
+	s_prediction_enable_box.itemnames		= yesno_names;
+	s_prediction_enable_box.curvalue		= Cvar_VariableValue( "cl_predict_players" ) ? 1 : 0;
+
+	s_prediction_maxping_slider.generic.type	= MTYPE_SLIDER;
+	s_prediction_maxping_slider.generic.x		= 0;
+	s_prediction_maxping_slider.generic.y		= 20;
+	s_prediction_maxping_slider.generic.name	= "ping compensation";
+	s_prediction_maxping_slider.generic.callback = PredictionMaxPingFunc;
+	s_prediction_maxping_slider.generic.statusbar = "cl_predict_players_maxping";
+	s_prediction_maxping_slider.minvalue		= 0;
+	s_prediction_maxping_slider.maxvalue		= 300 / PP_MENU_STEP;
+	s_prediction_maxping_slider.curvalue		= Prediction_SliderValue( "cl_predict_players_maxping", &s_prediction_maxping_slider );
+
+	s_prediction_smooth_slider.generic.type	= MTYPE_SLIDER;
+	s_prediction_smooth_slider.generic.x		= 0;
+	s_prediction_smooth_slider.generic.y		= 30;
+	s_prediction_smooth_slider.generic.name	= "smoothing";
+	s_prediction_smooth_slider.generic.callback = PredictionSmoothFunc;
+	s_prediction_smooth_slider.generic.statusbar = "cl_predict_players_smooth";
+	s_prediction_smooth_slider.minvalue		= 0;
+	s_prediction_smooth_slider.maxvalue		= 150 / PP_MENU_STEP;
+	s_prediction_smooth_slider.curvalue		= Prediction_SliderValue( "cl_predict_players_smooth", &s_prediction_smooth_slider );
+
+	s_prediction_offset_slider.generic.type	= MTYPE_SLIDER;
+	s_prediction_offset_slider.generic.x		= 0;
+	s_prediction_offset_slider.generic.y		= 40;
+	s_prediction_offset_slider.generic.name	= "fine tuning";
+	s_prediction_offset_slider.generic.callback = PredictionOffsetFunc;
+	s_prediction_offset_slider.generic.statusbar = "cl_predict_players_offset";
+	s_prediction_offset_slider.minvalue		= -50 / PP_MENU_STEP;
+	s_prediction_offset_slider.maxvalue		= 50 / PP_MENU_STEP;
+	s_prediction_offset_slider.curvalue		= Prediction_SliderValue( "cl_predict_players_offset", &s_prediction_offset_slider );
+
+	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_enable_box );
+	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_maxping_slider );
+	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_smooth_slider );
+	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_offset_slider );
+}
+
+static void Prediction_DrawValue( menuslider_s *s )
+{
+	char	buff[16];
+
+	//to the right of the slider (two end caps and ten notches wide)
+	Com_sprintf( buff, sizeof(buff), "%d ms", (int)(s->curvalue * PP_MENU_STEP) );
+	Menu_DrawString( s_prediction_menu.x + s->generic.x + 16 + 13 * 8, s_prediction_menu.y + s->generic.y, buff );
+}
+
+static void Prediction_MenuDraw( void )
+{
+	int		i, y;
+
+	M_Banner( "m_banner_multiplayer" );
+
+	Menu_AdjustCursor( &s_prediction_menu, 1 );
+	Menu_Draw( &s_prediction_menu );
+
+	Prediction_DrawValue( &s_prediction_maxping_slider );
+	Prediction_DrawValue( &s_prediction_smooth_slider );
+	Prediction_DrawValue( &s_prediction_offset_slider );
+
+	if (s_prediction_menu.cursor >= 0 && s_prediction_menu.cursor < 4)
+	{
+		y = s_prediction_menu.y + 64;
+
+		for (i = 0; i < 4; i++)
+		{
+			const char *line = prediction_help[s_prediction_menu.cursor][i];
+
+			Menu_DrawStringDark( viddef.width / 2 - (int)strlen( line ) * 4, y + i * 10, line );
+		}
+	}
+}
+
+static const char *Prediction_MenuKey( int key )
+{
+	return Default_MenuKey( &s_prediction_menu, key );
+}
+
+static void M_Menu_Prediction_f( void )
+{
+	Prediction_MenuInit();
+	M_PushMenu( Prediction_MenuDraw, Prediction_MenuKey );
+}
+
+static void PlayerPredictionFunc( void *unused )
+{
+	M_Menu_Prediction_f();
+}
 
 static void Multiplayer_MenuDraw (void)
 {
@@ -556,9 +744,17 @@ static void Multiplayer_MenuInit( void )
 	s_player_setup_action.generic.name	= " player setup";
 	s_player_setup_action.generic.callback = PlayerSetupFunc;
 
+	s_player_prediction_action.generic.type	= MTYPE_ACTION;
+	s_player_prediction_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_player_prediction_action.generic.x		= 0;
+	s_player_prediction_action.generic.y		= 30;
+	s_player_prediction_action.generic.name	= " player prediction";
+	s_player_prediction_action.generic.callback = PlayerPredictionFunc;
+
 	Menu_AddItem( &s_multiplayer_menu, ( void * ) &s_join_network_server_action );
 	Menu_AddItem( &s_multiplayer_menu, ( void * ) &s_start_network_server_action );
 	Menu_AddItem( &s_multiplayer_menu, ( void * ) &s_player_setup_action );
+	Menu_AddItem( &s_multiplayer_menu, ( void * ) &s_player_prediction_action );
 
 	Menu_SetStatusBar( &s_multiplayer_menu, NULL );
 

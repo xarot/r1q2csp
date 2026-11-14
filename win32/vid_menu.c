@@ -234,8 +234,22 @@ void EXPORT VID_MenuInit( void )
 		"[1440 900 ]",
 		"[1680 1050]",
 		"[2560 1920]",
+		"[1280 720 ]",
+		"[1366 768 ]",
+		"[1600 900 ]",
+		"[1920 1080]",
+		"[1920 1200]",
+		"[2560 1080]",
+		"[2560 1440]",
+		"[2560 1600]",
+		"[3440 1440]",
+		"[3840 1600]",
+		"[3840 2160]",
+		"[5120 1440]",
+		"[desktop  ]",
 		0
 	};
+	const int last_mode = (int)(sizeof(resolutions) / sizeof(resolutions[0])) - 2;
 
 	static const char *refs[] =
 	{
@@ -278,14 +292,14 @@ void EXPORT VID_MenuInit( void )
 		sw_stipplealpha = Cvar_Get( "sw_stipplealpha", "0", CVAR_ARCHIVE );
 
 	s_mode_list[SOFTWARE_MENU].curvalue = sw_mode->intvalue;
-	if (s_mode_list[SOFTWARE_MENU].curvalue > 14)
-		s_mode_list[SOFTWARE_MENU].curvalue = 14;
+	if (s_mode_list[SOFTWARE_MENU].curvalue > last_mode)
+		s_mode_list[SOFTWARE_MENU].curvalue = last_mode;
 	else if (s_mode_list[SOFTWARE_MENU].curvalue < 0)
 		s_mode_list[SOFTWARE_MENU].curvalue = 0;
 
 	s_mode_list[OPENGL_MENU].curvalue = gl_mode->intvalue;
-	if (s_mode_list[OPENGL_MENU].curvalue > 14)
-		s_mode_list[OPENGL_MENU].curvalue = 14;
+	if (s_mode_list[OPENGL_MENU].curvalue > last_mode)
+		s_mode_list[OPENGL_MENU].curvalue = last_mode;
 	else if (s_mode_list[OPENGL_MENU].curvalue < 0)
 		s_mode_list[OPENGL_MENU].curvalue = 0;
 

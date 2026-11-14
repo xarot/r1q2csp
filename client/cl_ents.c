@@ -20,7 +20,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_ents.c -- entity parsing and management
 
 #include "client.h"
-#include "cl_csp.h"
 
 
 extern	struct model_s	*cl_mod_powerscreen;
@@ -1281,9 +1280,6 @@ void CL_ParseFrame (int extrabits)
 	//cl.playerlerp = 0;
 	//Com_DPrintf ("FRAME @ playerlerp %g\n", cl.playerlerp);
 
-	// CSP v2 Phase 1 — record local snapshot receive timestamp
-	CL_CSP_ParseFrameNotify ();
-
 	//HACK: we steal last bits of this int for the offset
 	//if serverframe gets that high then the server has been on the same map
 	//for over 19 days... how often will this legitimately happen, and do we
@@ -1346,18 +1342,10 @@ void CL_ParseFrame (int extrabits)
 		Com_Printf ("   frame:%i  delta:%i\n", LOG_CLIENT, cl.frame.serverframe,
 		cl.frame.deltaframe);
 
-	// Phase E4: explicitly clear the validity flag before validation.
-	// cl.frame.valid is NOT cleared at the start of CL_ParseFrame in the
-	// original code — it retains the previous frame's value. This means
-	// reading cl.frame.valid after the validation block would be unreliable
-	// (could be stale-true from a prior valid frame). By clearing it here,
-	// the flag is a clean indicator of THIS frame's validation result.
-	cl.frame.valid = false;
-
 	// If the frame is delta compressed from data that we
 	// no longer have available, we must suck up the rest of
 	// the frame, but not use it, then ask for a non-compressed
-	// message
+	// message 
 	if (cl.frame.deltaframe <= 0)
 	{
 		cl.frame.valid = true;		// uncompressed frame
@@ -1419,15 +1407,6 @@ void CL_ParseFrame (int extrabits)
 	}
 
 	CL_ParsePacketEntities (old, &cl.frame);
-
-	// Phase E4: mark the authoritative frame as validated ONLY if it passed
-	// delta validation (cl.frame.valid was cleared before the validation
-	// block and set to true only on the uncompressed or valid-delta path).
-	// This is the single point where csp_authoritative_frame_parsed is set,
-	// ensuring invalid delta bases and svc_playerupdate-only messages never
-	// trigger CL_CSP_ProcessSnapshot().
-	if (cl.frame.valid)
-		CL_CSP_FrameValidated ();
 
 	//r1: now write protocol 34 compatible delta from our localstate for demo.
 	if (!cls.demowaiting && cls.demorecording && cls.serverProtocol != PROTOCOL_ORIGINAL)
@@ -1534,6 +1513,9 @@ void CL_ParseFrame (int extrabits)
 		//r1: save function call
 		if (!(!cl_predict->intvalue || (cl.frame.playerstate.pmove.pm_flags & PMF_NO_PREDICTION)))
 			CL_CheckPredictionError ();
+
+		// new forecast base for the other players
+		CL_PP_NewFrame ();
 	}
 
 	if (cl.settings[SVSET_PLAYERUPDATES])
@@ -1640,10 +1622,6 @@ static void CL_AddPacketEntities (const frame_t *frame)
 		renderfx = s1->renderfx;
 
 		regular = false;
-
-		// CSP: flag to skip generic linked model rendering in BOTH mode
-		// (s1 is const, so we can't set modelindex2 = 0)
-		qboolean csp_skip_linked_models = false;
 
 		// set frame
 		if (effects & EF_ANIM01)
@@ -1879,6 +1857,14 @@ lerp_time;*/
 			}
 #endif
 
+			// other players are drawn where the server will have them when
+			// a shot fired now arrives, not where they were
+			if (s1->number <= cl.maxclients && s1->number != cl.playernum+1 &&
+				CL_PP_GetOrigin (s1->number, ent.origin, ent.origin))
+			{
+				FastVectorCopy (ent.origin, ent.oldorigin);
+			}
+
 			//Com_Printf ("lerpfrac = %f\n", cl.lerpfrac);
 		}
 
@@ -2029,243 +2015,8 @@ lerp_time;*/
 
 		//Com_Printf ("%d %d:", s1->modelindex, s1->number);
 
-		// CSP: Client-Side Prediction - render ghost entity for high-latency play
-		if (CL_CSP_ShouldRenderGhost (cent, s1->number))
-		{
-			vec3_t predicted_origin;
-			vec3_t predicted_angles;
-			vec3_t saved_origin;
-			vec3_t saved_angles;
-			int saved_frame;
-			int saved_oldframe;
-			float saved_backlerp;
-			int saved_skinnum;
-			float saved_alpha;
-			int saved_flags;
-			struct model_s *saved_model;
-			struct image_s *saved_skin;
-
-			// Predict future position based on velocity and latency
-			CL_CSP_PredictEntity (cent, s1->number, predicted_origin, predicted_angles);
-
-			// Render CSV: log engine-interpolated vs raw vs smoothed ghost (Req 2)
-			// ent.origin here is the engine-interpolated position (prev + lerpfrac*(current-prev))
-			// predicted_origin is the raw+smoothed ghost position from PredictEntity
-			CL_CSP_LogRender (
-				s1->number,
-				ent.origin,
-				predicted_origin,
-				(csp_enable->intvalue == CSP_GHOST_BOTH) ? true : false,
-				csp_enable->intvalue
-			);
-
-			if (csp_enable->intvalue == CSP_GHOST_ONLY)
-			{
-							// Ghost-only: render the ghost exactly like a normal player at the
-							// predicted position. The body is opaque with the original colors
-							// (no translucent/glowing hue), the weapon is drawn fully colored,
-							// and powerup shells (quad / power-screen) are applied the same way
-							// as for a normal player via the generic EF_COLOR_SHELL handling
-							// that runs after this block.
-				// Guard against NULL models during map precaching (e.g., openffa)
-				if (ent.model)
-				{
-					VectorCopy (predicted_origin, ent.origin);
-					VectorCopy (predicted_angles, ent.angles);
-
-								// Opaque body, like a normal player: same flags logic as the
-								// normal body (flags=0 when a color shell is present since
-								// renderfx goes on the separate shell entity, otherwise
-								// renderfx goes on the body). No translucency — fully colored.
-								if (effects & EF_COLOR_SHELL)
-									ent.flags = 0;
-								else
-									ent.flags = renderfx;
-								ent.alpha = 0;
-								// Prevent interpolation warping: anchor oldorigin to current
-								// position, disable backlerp so renderer doesn't lerp w/ stale data
-					ent.oldorigin[0] = ent.origin[0];
-					ent.oldorigin[1] = ent.origin[1];
-					ent.oldorigin[2] = ent.origin[2];
-					ent.backlerp = 0;
-					V_AddEntity (&ent);
-
-								// Save the complete ghost body state. The linked-weapon blocks
-								// below reuse `ent` and overwrite skin/skinnum/flags/alpha/model;
-								// we restore this snapshot afterwards so the generic EF_COLOR_SHELL
-								// pass (quad / powerup overlays) receives the original body at the
-								// predicted origin with its real model and skin.
-								VectorCopy (ent.origin, saved_origin);
-								VectorCopy (ent.angles, saved_angles);
-								saved_frame = ent.frame;
-								saved_oldframe = ent.oldframe;
-								saved_backlerp = ent.backlerp;
-								saved_skinnum = ent.skinnum;
-								saved_alpha = ent.alpha;
-								saved_flags = ent.flags;
-								saved_model = ent.model;
-								saved_skin = ent.skin;
-
-								// Linked entities (weapon/hand) at ghost position, drawn opaque
-								// and fully colored like a normal player's weapon.
-								if (s1->modelindex2)
-					{
-									if (s1->modelindex2 == 255)
-						{
-										ci = &cl.clientinfo[s1->skinnum & 0xff];
-										i = (s1->skinnum >> 8);
-										if (!cl_vwep->intvalue || i > MAX_CLIENTWEAPONMODELS - 1)
-											i = 0;
-										ent.model = ci->weaponmodel[i];
-							if (!ent.model)
-										{
-											if (i != 0)
-												ent.model = ci->weaponmodel[0];
-											if (!ent.model)
-												ent.model = cl.baseclientinfo.weaponmodel[0];
-										}
-										// Only add entity if we have a valid model —
-										// during map loading (e.g., openffa), weapon
-										// models may not be precached yet
-										if (ent.model)
-										{
-											// Never draw the weapon with the player's custom skin
-											// (mirrors the generic linked-model reset below)
-											ent.skin = NULL;
-											ent.skinnum = 0;
-											ent.flags = 0;
-											ent.alpha = 0;
-											V_AddEntity (&ent);
-										}
-						}
-									else
-						{
-										ent.model = cl.model_draw[s1->modelindex2];
-										// Guard against NULL models during map precaching
-										if (ent.model)
-										{
-											ent.skin = NULL;
-											ent.skinnum = 0;
-											ent.flags = 0;
-											ent.alpha = 0;
-											V_AddEntity (&ent);
-										}
-						}
-						ent.flags = 0;
-						ent.alpha = 0;
-					}
-
-					// Restore the complete ghost body state so the generic
-					// EF_COLOR_SHELL pass below renders the translucent colored
-					// shell on the original body (real model + skin) at the
-					// predicted position — exactly how it renders for a normal player.
-					VectorCopy (saved_origin, ent.origin);
-					VectorCopy (saved_angles, ent.angles);
-					ent.frame = saved_frame;
-					ent.oldframe = saved_oldframe;
-					ent.backlerp = saved_backlerp;
-					ent.skinnum = saved_skinnum;
-					ent.alpha = saved_alpha;
-					ent.flags = saved_flags;
-					ent.model = saved_model;
-					ent.skin = saved_skin;
-				}
-				// Prevent generic linked-model code below from rendering a second weapon
-				// at the server position, causing gun trailing in GHOST_ONLY mode
-				csp_skip_linked_models = true;
-			}
-			else
-			{
-				// Ghost + Both: render real body at server position, ghost at predicted.
-				// Linked models (weapons) are rendered at ghost predicted position only.
-				// Generic linked-model code below is skipped via csp_skip_linked_models.
-				V_AddEntity (&ent);
-
-				// Save real entity state
-				VectorCopy (ent.origin, saved_origin);
-				VectorCopy (ent.angles, saved_angles);
-				saved_frame = ent.frame;
-				saved_oldframe = ent.oldframe;
-				saved_backlerp = ent.backlerp;
-				saved_skinnum = ent.skinnum;
-				saved_alpha = ent.alpha;
-				saved_flags = ent.flags;
-				saved_model = ent.model;
-				saved_skin = ent.skin;
-
-				// Override with predicted position for ghost - near-solid same model
-				VectorCopy (predicted_origin, ent.origin);
-				VectorCopy (predicted_angles, ent.angles);
-
-				// Layer 1: near-solid ghost body (~90% like original player)
-				// Translucent so it's ghostly, original colors/skin preserved
-				ent.flags = RF_TRANSLUCENT;
-				ent.alpha = 0.90f;
-				ent.oldorigin[0] = ent.origin[0];
-				ent.oldorigin[1] = ent.origin[1];
-				ent.oldorigin[2] = ent.origin[2];
-				ent.backlerp = 0;
-				V_AddEntity (&ent);
-
-				// Layer 2: faint purple shell overlay for ghost identification
-				// Purple = RF_SHELL_RED|RF_SHELL_BLUE, not used by any stock item
-				// (Blue alone would confuse with quad damage)
-				ent.flags = RF_TRANSLUCENT | RF_SHELL_RED | RF_SHELL_BLUE;
-				ent.alpha = 0.20f;
-				V_AddEntity (&ent);
-
-				// Linked model (weapon/hand) at ghost predicted position
-				// Prevents gun trailing by anchoring weapon to ghost, not real entity
-				if (s1->modelindex2)
-				{
-					if (s1->modelindex2 == 255)
-					{
-						ci = &cl.clientinfo[s1->skinnum & 0xff];
-						i = (s1->skinnum >> 8);
-						if (!cl_vwep->intvalue || i > MAX_CLIENTWEAPONMODELS - 1)
-							i = 0;
-						ent.model = ci->weaponmodel[i];
-						if (!ent.model)
-						{
-							if (i != 0)
-								ent.model = ci->weaponmodel[0];
-							if (!ent.model)
-								ent.model = cl.baseclientinfo.weaponmodel[0];
-						}
-					}
-					else
-						ent.model = cl.model_draw[s1->modelindex2];
-
-					ent.flags = RF_TRANSLUCENT;
-					ent.alpha = 0.45f;
-					V_AddEntity (&ent);
-					ent.flags = 0;
-					ent.alpha = 0;
-				}
-
-				// Restore real entity state for linked models below
-				VectorCopy (saved_origin, ent.origin);
-				VectorCopy (saved_angles, ent.angles);
-				ent.frame = saved_frame;
-				ent.oldframe = saved_oldframe;
-				ent.backlerp = saved_backlerp;
-				ent.skinnum = saved_skinnum;
-				ent.alpha = saved_alpha;
-				ent.flags = saved_flags;
-				ent.model = saved_model;
-				ent.skin = saved_skin;
-
-				// Linked model (weapon/hand) already rendered at ghost's predicted
-				// position above. Skip generic linked-model code below so the server
-				// position doesn't get a duplicate weapon.
-				csp_skip_linked_models = true;
-			}
-		}
-		else
-		{
-			// add to refresh list
-			V_AddEntity (&ent);
-		}
+		// add to refresh list
+		V_AddEntity (&ent);
 
 		// color shells generate a seperate entity for the main model
 		if (effects & EF_COLOR_SHELL)
@@ -2281,7 +2032,7 @@ lerp_time;*/
 		ent.alpha = 0;
 
 		// duplicate for linked models
-		if (s1->modelindex2 && !csp_skip_linked_models)
+		if (s1->modelindex2)
 		{
 			if (s1->modelindex2 == 255)
 			{	
@@ -2860,6 +2611,7 @@ void CL_AddEntities (void)
 //	CL_AddLightStyles ();
 
 	CL_CalcViewValues ();
+	CL_PP_RenderFrame ();
 	// PMM - moved this here so the heat beam has the right values for the vieworg, and can lock the beam to the gun
 	CL_AddPacketEntities (&cl.frame);
 	if (cl_lents->intvalue)
@@ -2912,6 +2664,10 @@ void CL_GetEntityOrigin (int ent, vec3_t origin)
 		FastVectorCopy (cl.predicted_origin, *origin);
 		return;
 	}
+
+	// other players make their noise where they are drawn
+	if (CL_PP_GetShownOrigin (ent, origin))
+		return;
 
 	if (cent->current.renderfx & (RF_FRAMELERP|RF_BEAM))
 	{
