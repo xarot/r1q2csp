@@ -69,6 +69,126 @@ cvar_t		*scr_chathud_y;
 cvar_t		*scr_chathud_highlight;
 cvar_t		*scr_chathud_highlight_char;
 
+// 2D scaling. 0 = pick a whole number that suits the resolution.
+cvar_t		*scr_hudscale;			// status bar (health, ammo, ...) and center prints
+cvar_t		*scr_scorescale;		// scoreboard, help computer, inventory
+cvar_t		*scr_conscale;			// console, notify lines, chat hud
+cvar_t		*scr_crosshairscale;
+
+static cvar_t	*r_drawscale;		// read by the renderer, see gl_draw.c
+static cvar_t	*r_drawscale_ok;	// set by renderers that honour r_drawscale
+
+static qboolean	scr_scaling;
+static uint32	scr_real_width, scr_real_height;
+
+/*
+================
+SCR_GetScale
+
+Resolves a scale cvar to the factor to use. needRenderer is false for
+things that are stretched by the client itself.
+================
+*/
+float SCR_GetScale (cvar_t *var, qboolean needRenderer)
+{
+	float	s, max, w, h;
+
+	if (!var)
+		return 1.0f;
+
+	if (needRenderer && (!r_drawscale || !r_drawscale_ok || !r_drawscale_ok->intvalue))
+		return 1.0f;
+
+	w = (float)(scr_scaling ? scr_real_width : viddef.width);
+	h = (float)(scr_scaling ? scr_real_height : viddef.height);
+
+	if (w < 320 || h < 240)
+		return 1.0f;
+
+	s = var->value;
+
+	if (s <= 0)
+	{
+		// automatic: 1 below 1080 lines, 2 at 1080 and 1440, 4 at 2160
+		s = (float)(int)(h / 540.0f);
+		if (s < 1.0f)
+			s = 1.0f;
+	}
+	else if (s < 0.5f)
+	{
+		s = 0.5f;
+	}
+
+	// layouts are made for at least 320x240
+	max = w / 320.0f;
+	if (h / 240.0f < max)
+		max = h / 240.0f;
+
+	if (s > max)
+		s = max;
+
+	return s;
+}
+
+/*
+================
+SCR_BeginScale / SCR_EndScale
+
+Everything drawn between the two is laid out for a screen that is scale
+times smaller and enlarged by the renderer. viddef is switched to the
+smaller screen meanwhile, so existing layout code needs no changes.
+================
+*/
+void SCR_BeginScale (cvar_t *var)
+{
+	float	s;
+
+	if (scr_scaling)
+		return;
+
+	s = SCR_GetScale (var, true);
+	if (s == 1.0f)
+		return;
+
+	scr_real_width = viddef.width;
+	scr_real_height = viddef.height;
+
+	viddef.width = (uint32)(scr_real_width / s);
+	viddef.height = (uint32)(scr_real_height / s);
+
+	r_drawscale->value = s;
+	scr_scaling = true;
+}
+
+void SCR_EndScale (void)
+{
+	if (!scr_scaling)
+		return;
+
+	viddef.width = scr_real_width;
+	viddef.height = scr_real_height;
+
+	r_drawscale->value = 1.0f;
+	scr_scaling = false;
+}
+
+/*
+================
+SCR_ConsoleWidth
+
+Width in pixels the console is laid out for, whether or not the screen is
+currently switched to the scaled size.
+================
+*/
+int SCR_ConsoleWidth (void)
+{
+	uint32	w;
+
+	w = scr_scaling ? scr_real_width : viddef.width;
+
+	return (int)(w / SCR_GetScale (scr_conscale, true));
+}
+
 typedef struct
 {
 	int		x1, y1, x2, y2;
@@ -499,7 +619,7 @@ void SCR_DrawChatHud (void)
 	int		i, j;
 
 	if (!scr_chathud_y->intvalue)
-		v = cl.refdef.height - (8 * (scr_chathud_lines->intvalue + 4));
+		v = (int)(cl.refdef.height / SCR_GetScale (scr_conscale, true)) - (8 * (scr_chathud_lines->intvalue + 4));
 	else
 		v = scr_chathud_y->intvalue;
 
@@ -683,6 +803,14 @@ void SCR_Init (void)
 	scr_chathud_highlight = Cvar_Get ("scr_chathud_highlight", "0", 0);
 	scr_chathud_highlight_char = Cvar_Get ("scr_chathud_highlight_char", " ", 0);
 
+	scr_hudscale = Cvar_Get ("scr_hudscale", "0", CVAR_ARCHIVE);
+	scr_scorescale = Cvar_Get ("scr_scorescale", "0", CVAR_ARCHIVE);
+	scr_conscale = Cvar_Get ("scr_conscale", "0", CVAR_ARCHIVE);
+	scr_crosshairscale = Cvar_Get ("scr_crosshairscale", "0", CVAR_ARCHIVE);
+
+	r_drawscale = Cvar_Get ("r_drawscale", "1", 0);
+	r_drawscale_ok = Cvar_Get ("r_drawscale_ok", "0", 0);
+
 	scr_chathud_lines->changed = SCR_Chathud_Changed;
 	scr_chathud_lines->changed (scr_chathud_lines, scr_chathud_lines->string, scr_chathud_lines->string);
 
@@ -797,11 +925,15 @@ SCR_DrawConsole
 */
 void SCR_DrawConsole (void)
 {
-	//Con_CheckResize ();
-	
+	// the line width follows the resolution and scr_conscale
+	Con_CheckResize ();
+
+	SCR_BeginScale (scr_conscale);
+
 	if (cls.state <= ca_connecting)
 	{	// forced full screen console
 		Con_DrawConsole (1.0);
+		SCR_EndScale ();
 		return;
 	}
 
@@ -809,6 +941,7 @@ void SCR_DrawConsole (void)
 	{	// connected, but can't render
 		Con_DrawConsole (0.5);
 		re.DrawFill (0, viddef.height/2, viddef.width, viddef.height/2, 0);
+		SCR_EndScale ();
 		return;
 	}
 
@@ -823,6 +956,8 @@ void SCR_DrawConsole (void)
 			Con_DrawNotify ();	// only draw notify in game
 		}
 	}
+
+	SCR_EndScale ();
 }
 
 //=============================================================================
@@ -1736,21 +1871,33 @@ void SCR_UpdateScreen (void)
 			if (scr_debuggraph->intvalue || scr_timegraph->intvalue || scr_netgraph->intvalue || scr_sizegraph->intvalue)
 				SCR_DrawDebugGraph ();
 
+			SCR_BeginScale (scr_hudscale);
 			SCR_DrawStats ();
+			SCR_EndScale ();
+
+			SCR_BeginScale (scr_scorescale);
 			if (cl.frame.playerstate.stats[STAT_LAYOUTS] & 1)
 				SCR_DrawLayout ();
 			if (cl.frame.playerstate.stats[STAT_LAYOUTS] & 2)
 				CL_DrawInventory ();
+			SCR_EndScale ();
 
 			SCR_DrawNet ();
+
+			SCR_BeginScale (scr_hudscale);
 			SCR_CheckDrawCenterString ();
+			SCR_EndScale ();
 
 			SCR_DrawPause ();
 
 			SCR_DrawConsole ();
 
 			if (scr_chathud->intvalue)
+			{
+				SCR_BeginScale (scr_conscale);
 				SCR_DrawChatHud ();
+				SCR_EndScale ();
+			}
 
 			M_Draw ();
 

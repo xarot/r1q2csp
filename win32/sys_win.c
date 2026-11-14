@@ -2428,6 +2428,20 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLin
 
 	badspins = goodspins = 0;
 
+	// With display scaling above 100%, Windows otherwise pretends the screen
+	// is smaller and stretches our window, so a 3840x2160 mode would neither
+	// fit nor be sharp. Ask for real pixels.
+	{
+		HMODULE	user32 = GetModuleHandle ("user32.dll");
+		BOOL	(WINAPI *setAware)(void) = NULL;
+
+		if (user32)
+			setAware = (BOOL (WINAPI *)(void))GetProcAddress (user32, "SetProcessDPIAware");
+
+		if (setAware)
+			setAware ();
+	}
+
     /* previous instances do not exist in Win32 */
     if (hPrevInstance)
         return 0;

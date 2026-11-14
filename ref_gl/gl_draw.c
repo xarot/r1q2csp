@@ -34,8 +34,22 @@ typedef struct drawchars_s
 	int		x;
 	int		y;
 	int		num;
-	int		pad;
+	float	scale;
 } drawchars_t;
+
+// 2D scale. The client changes ->value directly around the parts of the
+// screen it wants enlarged (hud, console...) and lays those parts out for a
+// screen that is that many times smaller. Positions and sizes are multiplied
+// by it here.
+cvar_t		*r_drawscale;
+
+static void Draw_Vertex (float scale, int x, int y)
+{
+	if (scale == 1.0f)
+		qglVertex2i (x, y);
+	else
+		qglVertex2f (x * scale, y * scale);
+}
 
 int			defer_drawing;
 int			drawcharsindex;
@@ -55,6 +69,12 @@ void Draw_InitLocal (void)
 	GL_Bind( draw_chars->texnum );
 	qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+	r_drawscale = ri.Cvar_Get ("r_drawscale", "1", 0);
+	r_drawscale->value = 1.0f;
+
+	// tell the client this renderer understands r_drawscale
+	ri.Cvar_Set ("r_drawscale_ok", "1");
 }
 
 static float conchars_texoffset[16] =
@@ -106,13 +126,13 @@ void Draw_AddText (void)
 		fcolbottom = conchars_texlimits[col];
 
 		qglTexCoord2f (fcol, frow);
-		qglVertex2i (x, y);
+		Draw_Vertex (drawchars[i].scale, x, y);
 		qglTexCoord2f (fcolbottom, frow);
-		qglVertex2i (x+8, y);
+		Draw_Vertex (drawchars[i].scale, x+8, y);
 		qglTexCoord2f (fcolbottom, frowbottom);
-		qglVertex2i (x+8, y+8);
+		Draw_Vertex (drawchars[i].scale, x+8, y+8);
 		qglTexCoord2f (fcol, frowbottom);
-		qglVertex2i (x, y+8);
+		Draw_Vertex (drawchars[i].scale, x, y+8);
 	}
 
 	qglEnd ();
@@ -157,6 +177,7 @@ void EXPORT Draw_Char (int x, int y, int num)
 		drawchars[drawcharsindex].x = x;
 		drawchars[drawcharsindex].y = y;
 		drawchars[drawcharsindex].num = num;
+		drawchars[drawcharsindex].scale = r_drawscale->value;
 
 		if (++drawcharsindex == MAX_DRAWCHARS)
 			ri.Sys_Error (ERR_FATAL, "drawcharsindex == MAX_DRAWCHARS");
@@ -192,13 +213,13 @@ void EXPORT Draw_Char (int x, int y, int num)
 
 	qglBegin (GL_QUADS);
 	qglTexCoord2f (fcol, frow);
-	qglVertex2i (x, y);
+	Draw_Vertex (r_drawscale->value, x, y);
 	qglTexCoord2f (fcolbottom, frow);
-	qglVertex2i (x+8, y);
+	Draw_Vertex (r_drawscale->value, x+8, y);
 	qglTexCoord2f (fcolbottom, frowbottom);
-	qglVertex2i (x+8, y+8);
+	Draw_Vertex (r_drawscale->value, x+8, y+8);
 	qglTexCoord2f (fcol, frowbottom);
-	qglVertex2i (x, y+8);
+	Draw_Vertex (r_drawscale->value, x, y+8);
 	qglEnd ();
 	GL_CheckForError ();
 
@@ -297,13 +318,13 @@ void EXPORT Draw_StretchPic (int x, int y, int w, int h, char *pic)
 	GL_Bind (gl->texnum);
 	qglBegin (GL_QUADS);
 	qglTexCoord2f (gl->sl, gl->tl);
-	qglVertex2i (x, y);
+	Draw_Vertex (r_drawscale->value, x, y);
 	qglTexCoord2f (gl->sh, gl->tl);
-	qglVertex2i (x+w, y);
+	Draw_Vertex (r_drawscale->value, x+w, y);
 	qglTexCoord2f (gl->sh, gl->th);
-	qglVertex2i (x+w, y+h);
+	Draw_Vertex (r_drawscale->value, x+w, y+h);
 	qglTexCoord2f (gl->sl, gl->th);
-	qglVertex2i (x, y+h);
+	Draw_Vertex (r_drawscale->value, x, y+h);
 	qglEnd ();
 
 	GL_CheckForError ();
@@ -368,13 +389,13 @@ void EXPORT Draw_Pic (int x, int y, char *pic)
 
 	qglBegin (GL_QUADS);
 	qglTexCoord2f (gl->sl, gl->tl);
-	qglVertex2i (x, y);
+	Draw_Vertex (r_drawscale->value, x, y);
 	qglTexCoord2f (gl->sh, gl->tl);
-	qglVertex2i (x+gl->width, y);
+	Draw_Vertex (r_drawscale->value, x+gl->width, y);
 	qglTexCoord2f (gl->sh, gl->th);
-	qglVertex2i (x+gl->width, y+gl->height);
+	Draw_Vertex (r_drawscale->value, x+gl->width, y+gl->height);
 	qglTexCoord2f (gl->sl, gl->th);
-	qglVertex2i (x, y+gl->height);
+	Draw_Vertex (r_drawscale->value, x, y+gl->height);
 	qglEnd ();
 
 	GL_CheckForError ();
@@ -470,10 +491,10 @@ void EXPORT Draw_Fill (int x, int y, int w, int h, int c)
 
 	qglBegin (GL_QUADS);
 
-	qglVertex2i (x,y);
-	qglVertex2i (x+w, y);
-	qglVertex2i (x+w, y+h);
-	qglVertex2i (x, y+h);
+	Draw_Vertex (r_drawscale->value, x, y);
+	Draw_Vertex (r_drawscale->value, x+w, y);
+	Draw_Vertex (r_drawscale->value, x+w, y+h);
+	Draw_Vertex (r_drawscale->value, x, y+h);
 
 	qglEnd ();
 	GL_CheckForError ();

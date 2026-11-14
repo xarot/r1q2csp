@@ -52,6 +52,7 @@ cvar_t		*cl_drawmaptime_y;
 cvar_t		*cl_defermodels;
 cvar_t		*cl_particlecount;
 
+cvar_t		*cl_widescreen_fov;
 cvar_t		*scr_crosshair_x;
 cvar_t		*scr_crosshair_y;
 
@@ -547,6 +548,9 @@ SCR_DrawCrosshair
 */
 __inline void SCR_DrawCrosshair (void)
 {
+	float	scale;
+	int		w, h;
+
 	if (!crosshair->intvalue)
 		return;
 
@@ -559,8 +563,21 @@ __inline void SCR_DrawCrosshair (void)
 	if (!crosshair_pic[0])
 		return;
 
-	re.DrawPic (scr_vrect.x + scr_crosshair_x->intvalue + ((scr_vrect.width - crosshair_width)>>1)
-	, scr_vrect.y + + scr_crosshair_y->intvalue + ((scr_vrect.height - crosshair_height)>>1), crosshair_pic);
+	scale = SCR_GetScale (scr_crosshairscale, false);
+
+	if (scale == 1.0f)
+	{
+		re.DrawPic (scr_vrect.x + scr_crosshair_x->intvalue + ((scr_vrect.width - crosshair_width)>>1)
+		, scr_vrect.y + + scr_crosshair_y->intvalue + ((scr_vrect.height - crosshair_height)>>1), crosshair_pic);
+	}
+	else
+	{
+		w = (int)(crosshair_width * scale);
+		h = (int)(crosshair_height * scale);
+
+		re.DrawStretchPic (scr_vrect.x + scr_crosshair_x->intvalue + ((scr_vrect.width - w)>>1),
+			scr_vrect.y + scr_crosshair_y->intvalue + ((scr_vrect.height - h)>>1), w, h, crosshair_pic);
+	}
 }
 
 int spc = 0;
@@ -652,7 +669,24 @@ void V_RenderView(void)
 		cl.refdef.y = scr_vrect.y;
 		cl.refdef.width = scr_vrect.width;
 		cl.refdef.height = scr_vrect.height;
-		cl.refdef.fov_y = CalcFov (cl.refdef.fov_x, cl.refdef.width, cl.refdef.height);
+		if (cl_widescreen_fov->intvalue && cl.refdef.width * 3 > cl.refdef.height * 4)
+		{
+			// the fov is meant for a 4:3 screen. keep the vertical view of
+			// that screen and widen the horizontal one to fill the rest,
+			// instead of cutting off the top and bottom.
+			cl.refdef.fov_y = CalcFov (cl.refdef.fov_x, 4, 3);
+			cl.refdef.fov_x = (float)atan (tan (cl.refdef.fov_y / 360 * M_PI) * cl.refdef.width / cl.refdef.height) * 360 / M_PI;
+
+			if (cl.refdef.fov_x > 170)
+			{
+				cl.refdef.fov_x = 170;
+				cl.refdef.fov_y = CalcFov (cl.refdef.fov_x, cl.refdef.width, cl.refdef.height);
+			}
+		}
+		else
+		{
+			cl.refdef.fov_y = CalcFov (cl.refdef.fov_x, cl.refdef.width, cl.refdef.height);
+		}
 		cl.refdef.time = cl.time * 0.001f;
 
 		cl.refdef.areabits = cl.frame.areabits;
@@ -892,4 +926,6 @@ void V_Init (void)
 
 	scr_crosshair_x = Cvar_Get ("scr_crosshair_x", "0", 0);
 	scr_crosshair_y = Cvar_Get ("scr_crosshair_y", "0", 0);
+
+	cl_widescreen_fov = Cvar_Get ("cl_widescreen_fov", "1", CVAR_ARCHIVE);
 }

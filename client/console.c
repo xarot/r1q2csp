@@ -369,7 +369,7 @@ void Con_CheckResize (void)
 {
 	int		width;
 
-	width = (viddef.width >> 3) - 2;
+	width = (SCR_ConsoleWidth () >> 3) - 2;
 
 	if (width == con.linewidth)
 		return;
