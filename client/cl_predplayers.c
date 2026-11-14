@@ -253,8 +253,8 @@ CL_PP_Init
 */
 void CL_PP_Init (void)
 {
-	cl_predict_players = Cvar_Get ("cl_predict_players", "1", CVAR_ARCHIVE);
-	cl_predict_players_maxping = Cvar_Get ("cl_predict_players_maxping", "300", CVAR_ARCHIVE);
+	cl_predict_players = Cvar_Get ("cl_predict_players", "0", CVAR_ARCHIVE);
+	cl_predict_players_maxping = Cvar_Get ("cl_predict_players_maxping", "50", CVAR_ARCHIVE);
 	cl_predict_players_smooth = Cvar_Get ("cl_predict_players_smooth", "30", CVAR_ARCHIVE);
 	cl_predict_players_offset = Cvar_Get ("cl_predict_players_offset", "0", CVAR_ARCHIVE);
 	cl_predict_players_debug = Cvar_Get ("cl_predict_players_debug", "0", 0);
