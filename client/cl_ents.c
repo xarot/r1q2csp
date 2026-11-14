@@ -2611,6 +2611,7 @@ void CL_AddEntities (void)
 //	CL_AddLightStyles ();
 
 	CL_CalcViewValues ();
+	CL_PP_RenderFrame ();
 	// PMM - moved this here so the heat beam has the right values for the vieworg, and can lock the beam to the gun
 	CL_AddPacketEntities (&cl.frame);
 	if (cl_lents->intvalue)

@@ -259,6 +259,10 @@ void CL_ParseMuzzleFlash (void)
 	silenced = weapon & MZ_SILENCED;
 	weapon &= ~MZ_SILENCED;
 
+	// the server confirming one of our own shots
+	if (i == cl.playernum + 1)
+		CL_PP_LogShot (weapon);
+
 	pl = &cl_entities[i];
 
 	dl = CL_AllocDlight (i, true);

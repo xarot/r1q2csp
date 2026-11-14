@@ -833,6 +833,7 @@ void CL_ParseTEnt (void)
 			Com_Error (ERR_DROP, "CL_ParseTEnt: Insufficient bytes for TE_BLOOD");
 		MSG_ReadPos (&net_message, pos);
 		MSG_ReadDir (&net_message, dir);
+		CL_PP_LogImpact (type, pos);
 		CL_ParticleEffect (pos, dir, 0xe8, 60);
 		CL_Gibs (pos);
 		break;
@@ -844,6 +845,7 @@ void CL_ParseTEnt (void)
 			Com_Error (ERR_DROP, "CL_ParseTEnt: Insufficient bytes for TE_GUNSHOT/TE_SPARKS/TE_BULLET_SPARKS");
 		MSG_ReadPos (&net_message, pos);
 		MSG_ReadDir (&net_message, dir);
+		CL_PP_LogImpact (type, pos);
 		if (type == TE_GUNSHOT)
 			CL_ParticleEffect (pos, dir, 0, 40);
 		else
@@ -872,6 +874,7 @@ void CL_ParseTEnt (void)
 			Com_Error (ERR_DROP, "CL_ParseTEnt: Insufficient bytes for TE_SCREEN_SPARKS/TE_SHIELD_SPARKS");
 		MSG_ReadPos (&net_message, pos);
 		MSG_ReadDir (&net_message, dir);
+		CL_PP_LogImpact (type, pos);
 		if (type == TE_SCREEN_SPARKS)
 			CL_ParticleEffect (pos, dir, 0xd0, 40);
 		else
