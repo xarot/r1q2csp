@@ -1513,6 +1513,9 @@ void CL_ParseFrame (int extrabits)
 		//r1: save function call
 		if (!(!cl_predict->intvalue || (cl.frame.playerstate.pmove.pm_flags & PMF_NO_PREDICTION)))
 			CL_CheckPredictionError ();
+
+		// new forecast base for the other players
+		CL_PP_NewFrame ();
 	}
 
 	if (cl.settings[SVSET_PLAYERUPDATES])
@@ -1853,6 +1856,14 @@ lerp_time;*/
 					(cent->current.origin[i] - cent->prev.origin[i]);
 			}
 #endif
+
+			// other players are drawn where the server will have them when
+			// a shot fired now arrives, not where they were
+			if (s1->number <= cl.maxclients && s1->number != cl.playernum+1 &&
+				CL_PP_GetOrigin (s1->number, ent.origin, ent.origin))
+			{
+				FastVectorCopy (ent.origin, ent.oldorigin);
+			}
 
 			//Com_Printf ("lerpfrac = %f\n", cl.lerpfrac);
 		}
@@ -2652,6 +2663,10 @@ void CL_GetEntityOrigin (int ent, vec3_t origin)
 		FastVectorCopy (cl.predicted_origin, *origin);
 		return;
 	}
+
+	// other players make their noise where they are drawn
+	if (CL_PP_GetShownOrigin (ent, origin))
+		return;
 
 	if (cent->current.renderfx & (RF_FRAMELERP|RF_BEAM))
 	{

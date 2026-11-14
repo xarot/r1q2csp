@@ -1157,6 +1157,8 @@ void CL_ClearState (void)
 	//r1: local ents clear
 	Le_Reset ();
 
+	CL_PP_Reset ();
+
 	//r1: reset
 	cl.maxclients = MAX_CLIENTS;
 	SZ_Clear (&cls.netchan.message);
@@ -3538,6 +3540,7 @@ void CL_InitLocal (void)
 	cl_noskins = Cvar_Get ("cl_noskins", "0", 0);
 //	cl_autoskins = Cvar_Get ("cl_autoskins", "0", 0);
 	cl_predict = Cvar_Get ("cl_predict", "1", 0);
+	CL_PP_Init ();
 	cl_backlerp = Cvar_Get ("cl_backlerp", "1", 0);
 //	cl_minfps = Cvar_Get ("cl_minfps", "5", 0);
 

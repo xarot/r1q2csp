@@ -813,6 +813,15 @@ void IN_Restart_f (void);
 //
 void CL_PredictMovement (void);
 
+//
+// cl_predplayers.c
+//
+void CL_PP_Init (void);
+void CL_PP_Reset (void);
+void CL_PP_NewFrame (void);
+qboolean CL_PP_GetOrigin (int entnum, vec3_t lerped, vec3_t out);
+qboolean CL_PP_GetShownOrigin (int entnum, vec3_t out);
+
 void CL_FixCvarCheats (void);
 
 #ifdef CLIENT_DLL
