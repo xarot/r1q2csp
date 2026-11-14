@@ -43,6 +43,12 @@ server updates and runs it forward: along the ground, up and down stairs, with
 gravity while airborne, riding lifts, and stopping at walls. Your ping is
 measured automatically all the time, so nothing has to be entered for it.
 
+Prediction is meant to make up for a high ping, not to give players with a
+good connection something extra. It therefore only works while your measured
+ping is 100 ms or more. Below that, other players are drawn exactly as in
+the normal game, whatever the settings are. (It switches on at 105 ms and off
+again below 100 ms, so that it does not flicker at the limit.)
+
 The forecast can only assume that a player keeps doing what they are doing.
 Someone running or flying in a straight line is drawn in the right place.
 Someone who changes direction is drawn wrong until the next server update
@@ -70,7 +76,6 @@ your ping, up to this limit. What is left over you still lead yourself:
 
 | Your ping | Setting | Lead left for you | Lead with prediction off | Model in the right place |
 |-----------|---------|-------------------|--------------------------|--------------------------|
-| 50 ms     | 50      | none              | 150 ms                   | about 85%                |
 | 100 ms    | 50      | 50 ms             | 200 ms                   | about 85%                |
 | 100 ms    | 100     | none              | 200 ms                   | about 65%                |
 | 150 ms    | 0       | 150 ms            | 250 ms                   | about 99%                |
@@ -100,12 +105,9 @@ players who move steadily and worse in close fights. With prediction off the
 model is never in the right place for a moving player, which is why you lead.
 
 If your ping is at or below the setting, raising it further changes nothing.
-Good starting points:
-
-- ping up to about 60: leave it at 50, everything is compensated;
-- higher ping: start at 50 and get used to the shorter lead, then try 75 or
-  100. Setting it to your full ping removes the lead completely, but players
-  who dodge will often not be where they are drawn.
+A good starting point is 50: get used to the shorter lead, then try 75 or
+100. Setting it to your full ping removes the lead completely, but players
+who dodge will often not be where they are drawn.
 
 **Smoothing** applies when a new server update shows that the forecast was
 wrong. Instead of jumping to the corrected position, the model slides there

@@ -65,6 +65,11 @@ static qboolean PP_Enabled (void);
 #define	PP_RTT_SAMPLES		16
 #define	PP_MAX_BMODELS		512
 
+// prediction is there to make up for a high ping, not to give players with a
+// good connection something extra: below this round trip time it stays off
+#define	PP_MIN_PING			100.0f
+#define	PP_MIN_PING_ON		105.0f		// needed to switch on; avoids flicker at the limit
+
 #define	PPF_GROUND			1			// standing on something
 #define	PPF_NOGRAVITY		2			// swimming, on a ladder, hooked, flying...
 
@@ -134,6 +139,7 @@ static double			pp_clockOffset;		// realtime - servertime, smoothed
 static int				pp_rttSamples[PP_RTT_SAMPLES];
 static int				pp_rttCount;
 static float			pp_rtt;				// ms
+static qboolean			pp_pingOk;			// ping is high enough for prediction
 static int				pp_lastServertime;
 static int				pp_debugTime;
 
@@ -243,6 +249,7 @@ void CL_PP_Reset (void)
 	pp_clockValid = false;
 	pp_rttCount = 0;
 	pp_rtt = 0;
+	pp_pingOk = false;
 	pp_lastServertime = 0;
 }
 
@@ -266,6 +273,9 @@ void CL_PP_Init (void)
 static qboolean PP_Enabled (void)
 {
 	if (!cl_predict_players->intvalue || !cl_predict->intvalue)
+		return false;
+
+	if (!pp_pingOk)
 		return false;
 
 	if (cls.state != ca_active || cl.attractloop || cl.maxclients <= 1)
@@ -737,6 +747,11 @@ static void PP_UpdateTiming (void)
 		else
 			pp_rtt += ((float)best - pp_rtt) * 0.2f;
 	}
+
+	if (!pp_rttCount || pp_rtt < PP_MIN_PING)
+		pp_pingOk = false;
+	else if (pp_rtt >= PP_MIN_PING_ON)
+		pp_pingOk = true;
 }
 
 /*
