@@ -38,6 +38,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 cvar_t	*cl_predict_weapons;
 cvar_t	*cl_predict_weapons_debug;
+cvar_t	*cl_predict_weapons_raildelay;
+
+extern cvar_t	*cl_predict_players_maxping;
+extern cvar_t	*cl_predict_players_offset;
 
 extern cvar_t	*hand;
 extern cvar_t	*cl_predict;
@@ -139,6 +143,8 @@ static float		wp_rtt;
 
 static int			wp_railTime;
 static vec3_t		wp_railStart;
+static int			wp_railDrawTime;	// a trail waiting to be drawn, 0 if none
+static vec3_t		wp_railEnd;
 
 // the gun model
 static struct
@@ -158,6 +164,7 @@ void CL_WP_Init (void)
 {
 	cl_predict_weapons = Cvar_Get ("cl_predict_weapons", "1", CVAR_ARCHIVE);
 	cl_predict_weapons_debug = Cvar_Get ("cl_predict_weapons_debug", "0", 0);
+	cl_predict_weapons_raildelay = Cvar_Get ("cl_predict_weapons_raildelay", "-1", CVAR_ARCHIVE);
 }
 
 /*
@@ -180,6 +187,7 @@ void CL_WP_Reset (void)
 	wp_blockTime = 0;
 	wp_rtt = 0;
 	wp_railTime = 0;
+	wp_railDrawTime = 0;
 }
 
 /*
@@ -277,6 +285,41 @@ static int WP_Ammo (void)
 
 /*
 =================
+WP_RailDelay
+
+How long to hold back the railgun trail, in ms.
+
+Other players are drawn ahead of the server's picture by the part of the
+ping that is compensated. The shot is decided when it reaches the server,
+and the players on screen are where they were at that moment only after
+the part of the ping that is not compensated has passed. A trail drawn
+then goes through the players it really went through; drawn at once, it
+would show a hit on someone who still has time to move out of the way.
+=================
+*/
+static int WP_RailDelay (void)
+{
+	float	ping, comp;
+
+	if (cl_predict_weapons_raildelay->value >= 0)
+		return (int)cl_predict_weapons_raildelay->value;
+
+	ping = wp_rtt + cl_predict_players_offset->value;
+	if (ping < 0)
+		ping = 0;
+
+	comp = cl_predict_players_maxping->value;
+	if (comp < 0)
+		comp = 0;
+
+	if (ping <= comp)
+		return 0;
+
+	return (int)(ping - comp);
+}
+
+/*
+=================
 WP_Rail
 
 The trail of a railgun shot fired right now
@@ -286,6 +329,7 @@ static void WP_Rail (void)
 {
 	vec3_t	forward, right, start, end;
 	float	side;
+	int		delay;
 
 	wp_railTime = 0;
 
@@ -309,10 +353,20 @@ static void WP_Rail (void)
 	VectorMA (start, 8192, forward, end);
 	CL_PP_ShotTrace (start, end, end);
 
-	CL_RailTrailEffect (start, end);
-
 	wp_railTime = cls.realtime;
 	FastVectorCopy (start, wp_railStart);
+	FastVectorCopy (end, wp_railEnd);
+
+	delay = WP_RailDelay ();
+	if (delay < 1)
+	{
+		CL_RailTrailEffect (start, end);
+		wp_railDrawTime = 0;
+	}
+	else
+	{
+		wp_railDrawTime = cls.realtime + delay;
+	}
 }
 
 /*
@@ -783,6 +837,13 @@ CL_WP_RenderFrame
 */
 void CL_WP_RenderFrame (void)
 {
+	// a railgun trail that was held back
+	if (wp_railDrawTime && cls.realtime >= wp_railDrawTime)
+	{
+		wp_railDrawTime = 0;
+		CL_RailTrailEffect (wp_railStart, wp_railEnd);
+	}
+
 	if (!wp.valid || !WP_Allowed ())
 		return;
 
@@ -911,6 +972,14 @@ qboolean CL_WP_ConfirmRail (vec3_t start)
 	VectorSubtract (start, wp_railStart, d);
 	if (VectorLength (d) > 96)
 		return false;
+
+	// the server was quicker than our own delayed trail: show the server's
+	if (wp_railDrawTime)
+	{
+		wp_railDrawTime = 0;
+		wp_railTime = 0;
+		return false;
+	}
 
 	wp_railTime = 0;
 	return true;

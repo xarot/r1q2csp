@@ -204,7 +204,7 @@ To use player prediction without it, set `cl_predict_weapons 0` (menu:
 |--------------------------------------------|---------------------------------------------|
 | muzzle flash and firing sound              | rockets, grenades, blaster bolts and the BFG ball appearing |
 | the gun's firing and reload animation      | bullet and pellet impacts, blood, explosions |
-| the railgun trail                          | the view kick, quad damage sound, chaingun spin sounds |
+| the railgun trail (after a short delay, see below) | the view kick, quad damage sound, chaingun spin sounds |
 | repeat fire while the button is held       | hand grenades (not predicted at all) |
 
 Projectiles are left to the server on purpose. One drawn at once would have
@@ -220,6 +220,25 @@ shot still reaches the server one half of your ping later, and the server
 still decides what it hits. So the ping compensation setting above keeps its
 meaning, and nothing about hitting changes; the game only stops feeling as if
 the trigger were late.
+
+### The railgun trail is held back a little
+
+The flash, the sound and the gun animation come at once. The railgun trail
+does not: it is held back by the part of your ping that is not compensated,
+
+    trail delay = your ping - ping compensation   (never below 0)
+
+which is the same amount you still have to lead by. The reason is that the
+trail shows where the shot went, and the shot is decided when it reaches the
+server. Drawn at once, the trail would pass through a player who, by the time
+the shot arrives, has moved on, and it would look like a hit that did not
+count. Held back by this amount, the players on screen are where they were
+when the server decided the shot, so the trail goes through the players it
+really went through. With the whole ping compensated there is no delay.
+
+`cl_predict_weapons_raildelay` overrides this: `-1` (default) is automatic,
+`0` draws the trail at once, and any other value is a fixed delay in
+milliseconds.
 
 ### Limits
 
