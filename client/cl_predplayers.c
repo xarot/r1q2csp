@@ -1011,6 +1011,15 @@ static void PP_TrackPlayer (entity_state_t *s)
 	FastVectorCopy (ns.origin, p->lastOrigin);
 	p->wasAirborne = airborne;
 	p->lastRawVz = rawvz;
+
+	// the raw material for trying out other forecast models afterwards
+	if (pp_logFile)
+	{
+		fprintf (pp_logFile, "TRK f=%d t=%d e=%d o=%.3f %.3f %.3f a=%.1f %.1f anim=%d fl=%d v=%.0f %.0f %.0f\n",
+			cl.frame.serverframe, cls.realtime, s->number,
+			s->origin[0], s->origin[1], s->origin[2], s->angles[0], s->angles[1], s->frame,
+			ns.flags, ns.velocity[0], ns.velocity[1], ns.velocity[2]);
+	}
 }
 
 /*
@@ -1490,6 +1499,8 @@ static void PP_LogOpen (void)
 		"#   OFF_MODEL_BUT_HIT  crosshair not on the model, but the shot line went through the real player\n"
 		"#   confirmed=1        blood or sparks were reported on that player\n"
 		"# ACC     once a second: average error of everything drawn (see cl_predict_players_debug -2)\n"
+		"# TRK     every server frame, every visible player: frame, our clock, entity, origin,\n"
+		"#         angles (pitch yaw), animation frame, ground/no-gravity flags, velocity used\n"
 		"#\n");
 	fflush (pp_logFile);
 
