@@ -530,8 +530,8 @@ static const char *prediction_help[5][4] =
 	{
 		"Draws other players where they will be",
 		"when your shot reaches the server, so",
-		"you can aim straight at them instead",
-		"of leading. Best against steady movers."
+		"you lead less. Only works while your",
+		"ping is 100 ms or more."
 	},
 	{
 		"How much of your ping is compensated.",
