@@ -8,6 +8,7 @@ Quake II / R1Q2 server; nothing is needed on the server side.
 Additions:
 
 - [Prediction of other players](#player-prediction) (off by default)
+- [Immediate feedback for your own weapons](#weapon-prediction) (off by default)
 - [Widescreen video modes and automatic FOV](#video-modes-and-fov)
 - [Scaling of the HUD, scores, console and crosshair](#hud-scaling)
 - 24-bit FPU precision fix, so movement feels the same as in the original builds
@@ -176,6 +177,63 @@ The header of each log file explains its fields. `tools\pplog\` has two awk
 scripts that summarise a log: `shot_stats.awk` (hits and misses by cause) and
 `movement_replay.awk` (how well different forecast lengths would have done on
 the recorded movement).
+
+## Weapon prediction
+
+### What it does
+
+In Quake II the server decides when your weapon fires and tells the client
+afterwards. Everything you see and hear of your own shot (the muzzle flash,
+the sound, the gun moving in your hand, the railgun trail) therefore comes one
+ping after you pulled the trigger, and at a ping of 150 ms that is clearly
+noticeable.
+
+With `cl_predict_weapons 1` (menu: **Multiplayer > Player prediction >
+Predict own weapons**, off by default) the client runs the same weapon logic
+as the game itself and shows those things the moment you press fire. When the
+server's own report of the shot arrives, it is recognised and not shown a
+second time.
+
+| Shown at once                              | Still comes from the server, one ping later |
+|--------------------------------------------|---------------------------------------------|
+| muzzle flash and firing sound              | rockets, grenades, blaster bolts and the BFG ball appearing |
+| the gun's firing and reload animation      | bullet and pellet impacts, blood, explosions |
+| the railgun trail                          | the view kick, quad damage sound, chaingun spin sounds |
+| repeat fire while the button is held       | hand grenades (not predicted at all) |
+
+Projectiles are left to the server on purpose. One drawn at once would have
+to jump backwards when the real one appears, because the real one only leaves
+the gun when your command reaches the server.
+
+### Should the delay be removed, or should it match the lead?
+
+It is removed completely, and that is the right amount. The feedback only
+tells you "you fired now", and that is true the moment you press the button,
+whatever your ping is. It is not connected to how far you have to lead: the
+shot still reaches the server one half of your ping later, and the server
+still decides what it hits. So the ping compensation setting above keeps its
+meaning, and nothing about hitting changes; the game only stops feeling as if
+the trigger were late.
+
+### Limits
+
+- It knows the ten standard weapons by their view models. With any other
+  weapon (mods with their own guns) it does nothing and the server's feedback
+  is shown as before.
+- If a server's weapons behave differently from the standard game (other fire
+  rates, for example), predicted shots will not be confirmed. After three in a
+  row the prediction switches itself off for five seconds at a time.
+- A predicted shot can be wrong: for example when you die, run out of ammo or
+  the server switches your weapon in the instant before your command arrives.
+  You then see and hear a shot that never happened. The railgun trail is the
+  most visible case.
+- For a short moment after you change weapons nothing is predicted, because
+  the client cannot know yet which weapon the server will fire.
+- A silencer is only known after the first confirmed shot, so the first
+  silenced shot sounds loud to you.
+
+`cl_predict_weapons_debug 1` prints every predicted shot, every confirmation
+and every correction to the console.
 
 ## Video modes and FOV
 
