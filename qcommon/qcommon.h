@@ -134,7 +134,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #else
 	#define R1BINARY "R1Q2"
 	#define RELEASESTRING "Source Build"
-	#define PRODUCTNAME "R1Q2 (modified)"
+	#define PRODUCTNAME "R1Q2 (mod)"
 	#define PRODUCTNAMELOWER "r1q2 (mod)"
 #endif
 
