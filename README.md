@@ -98,6 +98,38 @@ consistently drawn too far back or too far ahead. Raise it if you still have
 to lead such a player, lower it if your shots pass in front of them. It is
 normally left at 0.
 
+### Why not simply compensate the whole ping?
+
+Because the client would have to know what the other player is going to do
+before they have done it.
+
+Think of throwing a ball to someone who is running. If the ball is in the air
+for a blink of an eye, you throw it at them and it arrives. If it is in the
+air for a quarter of a second, you have to throw it to where they will be, and
+that only works if they keep running the same way. If they stop or turn while
+the ball is in the air, it lands where they would have been.
+
+Prediction is the client making that guess for you. With a ping of 150 ms it
+has to guess about a quarter of a second ahead (the 100 ms update delay plus
+your ping). A player at full speed covers about 75 units in that time, more
+than two body widths, and a good player changes direction several times a
+second. The key press that makes them turn has not happened yet when the
+client draws the picture, so no amount of cleverness can show it. In logged
+games a guess that far ahead was right less than half of the time.
+
+A short guess is right nearly every time, because nobody can change course
+much in a tenth of a second. So the practical choice is between two things:
+
+- compensate everything: you aim straight at the model, but it is often in
+  the wrong place when a player dodges, and you cannot tell when;
+- compensate part of it: the model is where the player really will be most of
+  the time, and you lead the rest yourself, using your own judgement of what
+  that player is about to do. People are better at that part than a formula.
+
+The only real cure for the whole delay is lag compensation on the server,
+where the server rewinds players to what you saw when you fired. Quake II
+servers do not do that, and a client cannot add it.
+
 ### What to expect
 
 - Hitscan weapons (machinegun, chaingun, railgun, shotguns) benefit the most.
