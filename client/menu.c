@@ -522,9 +522,10 @@ static menulist_s		s_prediction_enable_box;
 static menuslider_s		s_prediction_maxping_slider;
 static menuslider_s		s_prediction_smooth_slider;
 static menuslider_s		s_prediction_offset_slider;
+static menulist_s		s_prediction_weapons_box;
 
 //explanation shown under the menu for the item at the cursor
-static const char *prediction_help[4][4] =
+static const char *prediction_help[5][4] =
 {
 	{
 		"Draws other players where they will be",
@@ -549,6 +550,12 @@ static const char *prediction_help[4][4] =
 		"you still have to lead a player running",
 		"straight, lower it if your shots land",
 		"ahead of them. Normally left at 0."
+	},
+	{
+		"Shows your own shot the moment you pull",
+		"the trigger: flash, sound, gun movement",
+		"and railgun trail, instead of one ping",
+		"later. The server still decides hits."
 	}
 };
 
@@ -570,6 +577,11 @@ static void PredictionSmoothFunc( void *unused )
 static void PredictionOffsetFunc( void *unused )
 {
 	Cvar_SetValue( "cl_predict_players_offset", s_prediction_offset_slider.curvalue * PP_MENU_STEP );
+}
+
+static void PredictionWeaponsFunc( void *unused )
+{
+	Cvar_SetValue( "cl_predict_weapons", (float)s_prediction_weapons_box.curvalue );
 }
 
 static float Prediction_SliderValue( const char *cvar, menuslider_s *s )
@@ -638,10 +650,20 @@ static void Prediction_MenuInit( void )
 	s_prediction_offset_slider.maxvalue		= 50 / PP_MENU_STEP;
 	s_prediction_offset_slider.curvalue		= Prediction_SliderValue( "cl_predict_players_offset", &s_prediction_offset_slider );
 
+	s_prediction_weapons_box.generic.type	= MTYPE_SPINCONTROL;
+	s_prediction_weapons_box.generic.x		= 0;
+	s_prediction_weapons_box.generic.y		= 60;
+	s_prediction_weapons_box.generic.name	= "predict own weapons";
+	s_prediction_weapons_box.generic.callback = PredictionWeaponsFunc;
+	s_prediction_weapons_box.generic.statusbar = "cl_predict_weapons";
+	s_prediction_weapons_box.itemnames		= yesno_names;
+	s_prediction_weapons_box.curvalue		= Cvar_VariableValue( "cl_predict_weapons" ) ? 1 : 0;
+
 	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_enable_box );
 	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_maxping_slider );
 	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_smooth_slider );
 	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_offset_slider );
+	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_weapons_box );
 }
 
 static void Prediction_DrawValue( menuslider_s *s )
@@ -666,9 +688,9 @@ static void Prediction_MenuDraw( void )
 	Prediction_DrawValue( &s_prediction_smooth_slider );
 	Prediction_DrawValue( &s_prediction_offset_slider );
 
-	if (s_prediction_menu.cursor >= 0 && s_prediction_menu.cursor < 4)
+	if (s_prediction_menu.cursor >= 0 && s_prediction_menu.cursor < 5)
 	{
-		y = s_prediction_menu.y + 64;
+		y = s_prediction_menu.y + 84;
 
 		for (i = 0; i < 4; i++)
 		{
