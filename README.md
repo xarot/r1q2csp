@@ -68,18 +68,39 @@ your ping, up to this limit. What is left over you still lead yourself:
 
     lead left for you = your ping - ping compensation   (never below 0)
 
-| Your ping | Setting | Lead left for you | Lead with prediction off |
-|-----------|---------|-------------------|--------------------------|
-| 50 ms     | 50      | none              | 150 ms                   |
-| 100 ms    | 50      | 50 ms             | 200 ms                   |
-| 150 ms    | 50      | 100 ms            | 250 ms                   |
-| 150 ms    | 150     | none              | 250 ms                   |
+| Your ping | Setting | Lead left for you | Lead with prediction off | Model in the right place |
+|-----------|---------|-------------------|--------------------------|--------------------------|
+| 50 ms     | 50      | none              | 150 ms                   | about 85%                |
+| 100 ms    | 50      | 50 ms             | 200 ms                   | about 85%                |
+| 100 ms    | 100     | none              | 200 ms                   | about 65%                |
+| 150 ms    | 0       | 150 ms            | 250 ms                   | about 99%                |
+| 150 ms    | 50      | 100 ms            | 250 ms                   | about 85%                |
+| 150 ms    | 75      | 75 ms             | 250 ms                   | about 75%                |
+| 150 ms    | 100     | 50 ms             | 250 ms                   | about 65%                |
+| 150 ms    | 150     | none              | 250 ms                   | about 50%                |
 
-A higher value means less leading, but more guessing. As a rough guide from
-logged deathmatch games, the predicted position was within a player's body
-width of the truth about 85% of the time when guessing 100 ms ahead, 65% at
-150 ms and 40% at 250 ms. If your ping is at or below the setting, raising it
-further changes nothing. Good starting points:
+A higher value means less leading, but more guessing. The last column depends
+only on how much ping is actually compensated (your ping or the setting,
+whichever is lower):
+
+| Ping compensated | Model in the right place | Average distance from the real position |
+|------------------|--------------------------|------------------------------------------|
+| 0 ms             | about 99%                | 4 units                                  |
+| 50 ms            | about 85%                | 8 units                                  |
+| 75 ms            | about 75%                | 11 units                                 |
+| 100 ms           | about 65%                | 14 units                                 |
+| 150 ms           | about 50%                | 20 units                                 |
+| 200 ms           | about 40%                | 29 units                                 |
+
+"In the right place" means within 16 units of where the player really was,
+which is half the width of a player (32 units). The numbers come from replaying
+the recorded movement of every player in a logged free-for-all game (about
+4,000 samples), so take them as a rough guide: they will be better against
+players who move steadily and worse in close fights. With prediction off the
+model is never in the right place for a moving player, which is why you lead.
+
+If your ping is at or below the setting, raising it further changes nothing.
+Good starting points:
 
 - ping up to about 60: leave it at 50, everything is compensated;
 - higher ping: start at 50 and get used to the shorter lead, then try 75 or
@@ -115,7 +136,7 @@ your ping). A player at full speed covers about 75 units in that time, more
 than two body widths, and a good player changes direction several times a
 second. The key press that makes them turn has not happened yet when the
 client draws the picture, so no amount of cleverness can show it. In logged
-games a guess that far ahead was right less than half of the time.
+games a guess that far ahead was right only about half of the time.
 
 A short guess is right nearly every time, because nobody can change course
 much in a tenth of a second. So the practical choice is between two things:
