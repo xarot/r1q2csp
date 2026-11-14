@@ -44,6 +44,7 @@ cvar_t	*cl_predict_players_debug;
 #define	PP_MIN_STEP_NORMAL	0.7f
 #define	PP_SIM_STEP			0.025f		// seconds per simulation step
 #define	PP_JUMP_SPEED		270.0f
+#define	PP_RUN_SPEED		300.0f
 #define	PP_MAX_SPEED		3000.0f		// faster than this is a teleport
 #define	PP_MAX_MOVER_SPEED	1500.0f
 #define	PP_MAX_ERROR		256.0f		// bigger corrections just snap
@@ -71,6 +72,7 @@ typedef struct
 	vec3_t		lastOrigin;
 	qboolean	wasAirborne;
 	float		lastRawVz;
+	float		speed;			// filtered horizontal speed
 
 	// forecast state
 	ppsnap_t	snap, oldsnap;
@@ -133,7 +135,7 @@ void CL_PP_Init (void)
 {
 	cl_predict_players = Cvar_Get ("cl_predict_players", "1", CVAR_ARCHIVE);
 	cl_predict_players_maxping = Cvar_Get ("cl_predict_players_maxping", "300", CVAR_ARCHIVE);
-	cl_predict_players_smooth = Cvar_Get ("cl_predict_players_smooth", "100", CVAR_ARCHIVE);
+	cl_predict_players_smooth = Cvar_Get ("cl_predict_players_smooth", "70", CVAR_ARCHIVE);
 	cl_predict_players_offset = Cvar_Get ("cl_predict_players_offset", "0", CVAR_ARCHIVE);
 	cl_predict_players_debug = Cvar_Get ("cl_predict_players_debug", "0", 0);
 
@@ -686,7 +688,7 @@ static void PP_TrackPlayer (entity_state_t *s)
 	ppstate_t	*p;
 	ppsnap_t	ns;
 	int			x, zd, zu, df;
-	float		dtsec, gravity, rawvz, dz, e;
+	float		dtsec, gravity, rawvz, dz, e, speed, use;
 	vec3_t		delta, end;
 	qboolean	fresh, airborne;
 	trace_t		tr;
@@ -777,6 +779,40 @@ static void PP_TrackPlayer (entity_state_t *s)
 	}
 
 	airborne = !(ns.flags & PPF_GROUND);
+
+	// The server moves a player once for every packet it gets from them, so
+	// the distance covered between two snapshots depends on how many of their
+	// packets happened to land in that interval. The direction of the delta
+	// is reliable, the speed is not: it flickers by a packet's worth every
+	// snapshot, and multiplied by the lead that makes the forecast shake.
+	// So take the direction from the newest delta and the speed from a
+	// filter, which is only overruled when the speed really changes.
+	speed = (float)sqrt (ns.velocity[0] * ns.velocity[0] + ns.velocity[1] * ns.velocity[1]);
+
+	if (fresh || speed < 10.0f)
+	{
+		if (speed < 10.0f)
+			ns.velocity[0] = ns.velocity[1] = 0;
+
+		p->speed = fresh ? 0 : speed;
+	}
+	else
+	{
+		if (speed < p->speed * 0.6f || speed > p->speed * 1.6f)
+			p->speed = speed;		// started, stopped, got launched
+		else
+			p->speed += (speed - p->speed) * 0.35f;
+
+		use = p->speed;
+
+		// running on the ground is always at full run speed
+		if (!airborne && use > 250.0f && use < 360.0f &&
+			!ns.moverVelocity[0] && !ns.moverVelocity[1] && !ns.moverVelocity[2])
+			use = PP_RUN_SPEED;
+
+		ns.velocity[0] *= use / speed;
+		ns.velocity[1] *= use / speed;
+	}
 
 	if (airborne)
 	{
