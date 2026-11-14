@@ -22,12 +22,17 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #ifndef _QCOMMON_H
 
+// Marks this as a modified client wherever the version is shown: the console
+// corner, the "version" and "cl_version" cvars that servers query, crash reports.
+// The build number itself stays the R1Q2 one this is based on.
+#define BUILD_TAG "premod"
+
 #ifdef NDEBUG
 	#include "../build.h"
-	#define	VERSION		"b"BUILD
+	#define	VERSION		"b" BUILD "-" BUILD_TAG
 #else
 	#define BUILD "DEBUG BUILD"
-	#define	VERSION		BUILD
+	#define	VERSION		BUILD "-" BUILD_TAG
 #endif
 
 #include "../game/q_shared.h"
