@@ -1871,3 +1871,56 @@ static void PP_LogFrame (void)
 	pp_ackPrev = pp_ackNow;
 	pp_ackNow = cls.netchan.incoming_acknowledged;
 }
+
+/*
+=================
+CL_PP_CommandTime
+
+The server time (ms) at which a command sent right now will be run, and
+the round trip time that estimate is based on. False until both are known.
+=================
+*/
+qboolean CL_PP_CommandTime (double *serverTime, float *rtt)
+{
+	if (!pp_clockValid || !pp_rttCount)
+		return false;
+
+	*serverTime = ((double)cls.realtime - pp_clockOffset) + (double)pp_rtt;
+	*rtt = pp_rtt;
+	return true;
+}
+
+/*
+=================
+CL_PP_ShotTrace
+
+Where a shot from start towards end is stopped by the map: the world and
+its doors, lifts and other brush models. Players do not stop it.
+=================
+*/
+void CL_PP_ShotTrace (vec3_t start, vec3_t end, vec3_t out)
+{
+	trace_t			t, trace;
+	int				i;
+	entity_state_t	*ent;
+	cmodel_t		*cmodel;
+	const int		mask = CONTENTS_SOLID|CONTENTS_WINDOW;
+
+	t = CM_BoxTrace (start, end, vec3_origin, vec3_origin, 0, mask);
+
+	for (i = 0; i < pp_numBmodels; i++)
+	{
+		ent = pp_bmodels[i];
+		cmodel = cl.model_clip[ent->modelindex];
+		if (!cmodel)
+			continue;
+
+		trace = CM_TransformedBoxTrace (start, end, vec3_origin, vec3_origin, cmodel->headnode,
+			mask, ent->origin, ent->angles);
+
+		if (trace.fraction < t.fraction)
+			t = trace;
+	}
+
+	FastVectorCopy (t.endpos, *out);
+}

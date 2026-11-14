@@ -1,7 +1,7 @@
 VPATH=../../game ../../linux ../../qcommon ../../server ../../client	
 
 quake2_SRC:=cl_cin.c cl_ents.c cl_fx.c cl_input.c cl_inv.c cl_main.c\
-	    cl_parse.c cl_pred.c cl_predplayers.c cl_tent.c cl_scrn.c cl_view.c cl_newfx.c\
+	    cl_parse.c cl_pred.c cl_predplayers.c cl_predweapons.c cl_tent.c cl_scrn.c cl_view.c cl_newfx.c\
 	    console.c keys.c menu.c snd_dma.c snd_mem.c snd_mix.c qmenu.c\
 	    m_flash.c\
 	    cmd.c cmodel.c common.c crc.c cvar.c files.c md4.c net_chan.c\
