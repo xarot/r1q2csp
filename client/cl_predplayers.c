@@ -64,6 +64,15 @@ typedef struct
 	int			servertime;
 } ppsnap_t;
 
+#define	PP_SAMPLES			64
+
+typedef struct
+{
+	int			targetTime;		// server time the drawing was meant for, 0 = unused
+	vec3_t		shown;
+	vec3_t		raw;
+} ppsample_t;
+
 typedef struct
 {
 	// raw tracking of the entity as the server reports it
@@ -87,6 +96,11 @@ typedef struct
 	int			shownTime;
 	qboolean	hasShown;
 	qboolean	fallback;
+
+	// accuracy meter: what was drawn, and for which server time
+	ppsample_t	samples[PP_SAMPLES];
+	int			sampleHead;
+	int			sampleTime;
 } ppstate_t;
 
 static ppstate_t	pp_players[MAX_CLIENTS];
@@ -108,6 +122,91 @@ static int				pp_rttCount;
 static float			pp_rtt;				// ms
 static int				pp_lastServertime;
 static int				pp_debugTime;
+
+// accuracy meter totals (cl_predict_players_debug -2)
+static int				pp_accCount;
+static float			pp_accShownAlong, pp_accShownMs, pp_accShownSq;
+static float			pp_accRawAlong, pp_accRawMs, pp_accRawSq;
+static int				pp_accTime;
+
+/*
+================
+PP_MeasureAccuracy
+
+The server has just told us where a player was during the last interval.
+Compare that with what we had on screen for those moments.
+last + delta is the path the player actually took.
+================
+*/
+static void PP_MeasureAccuracy (ppstate_t *p, vec3_t last, vec3_t delta, int servertime)
+{
+	int			i, interval;
+	float		speed, frac, len, along;
+	vec3_t		dir, truth, e;
+	ppsample_t	*sm;
+
+	interval = 1000 / cl.settings[SVSET_FPS];
+
+	len = (float)sqrt (delta[0] * delta[0] + delta[1] * delta[1]);
+	speed = len * 1000.0f / interval;
+
+	for (i = 0; i < PP_SAMPLES; i++)
+	{
+		sm = &p->samples[i];
+
+		if (!sm->targetTime || sm->targetTime > servertime)
+			continue;
+
+		if (sm->targetTime > servertime - interval && speed > 100.0f)
+		{
+			frac = (float)(sm->targetTime - (servertime - interval)) / interval;
+			VectorMA (last, frac, delta, truth);
+
+			dir[0] = delta[0] / len;
+			dir[1] = delta[1] / len;
+
+			VectorSubtract (sm->shown, truth, e);
+			along = e[0] * dir[0] + e[1] * dir[1];
+			pp_accShownAlong += along;
+			pp_accShownMs += along / speed * 1000.0f;
+			pp_accShownSq += DotProduct (e, e);
+
+			VectorSubtract (sm->raw, truth, e);
+			along = e[0] * dir[0] + e[1] * dir[1];
+			pp_accRawAlong += along;
+			pp_accRawMs += along / speed * 1000.0f;
+			pp_accRawSq += DotProduct (e, e);
+
+			pp_accCount++;
+		}
+
+		sm->targetTime = 0;
+	}
+}
+
+static void PP_ReportAccuracy (void)
+{
+	float	n;
+
+	if (cls.realtime - pp_accTime < 1000)
+		return;
+
+	pp_accTime = cls.realtime;
+
+	if (pp_accCount >= 10)
+	{
+		n = (float)pp_accCount;
+
+		Com_Printf ("pp accuracy: drawn %+.1f units (%+.0f ms) off %.1f | unsmoothed %+.1f units (%+.0f ms) off %.1f | rtt %.0f\n", LOG_CLIENT,
+			pp_accShownAlong / n, pp_accShownMs / n, (float)sqrt (pp_accShownSq / n),
+			pp_accRawAlong / n, pp_accRawMs / n, (float)sqrt (pp_accRawSq / n),
+			pp_rtt);
+	}
+
+	pp_accCount = 0;
+	pp_accShownAlong = pp_accShownMs = pp_accShownSq = 0;
+	pp_accRawAlong = pp_accRawMs = pp_accRawSq = 0;
+}
 
 /*
 ================
@@ -741,6 +840,14 @@ static void PP_TrackPlayer (entity_state_t *s)
 
 	rawvz = ns.velocity[2];
 
+	if (cl_predict_players_debug->intvalue == -2)
+	{
+		if (!fresh && df == 1)
+			PP_MeasureAccuracy (p, p->lastOrigin, delta, cl.frame.servertime);
+		else
+			memset (p->samples, 0, sizeof(p->samples));
+	}
+
 	// what are they standing on?
 	FastVectorCopy (ns.origin, end);
 	end[2] -= 0.25f;
@@ -899,6 +1006,9 @@ void CL_PP_NewFrame (void)
 	if (cls.state != ca_active || cl.attractloop)
 		return;
 
+	if (cl_predict_players_debug->intvalue == -2)
+		PP_ReportAccuracy ();
+
 	PP_UpdateTiming ();
 	PP_TrackBmodels ();
 
@@ -1044,6 +1154,16 @@ qboolean CL_PP_GetOrigin (int entnum, vec3_t lerped, vec3_t out)
 
 	p->shownTime = cls.realtime;
 	p->hasShown = true;
+
+	if (cl_predict_players_debug->intvalue == -2 && cls.realtime - p->sampleTime >= 10)
+	{
+		ppsample_t	*sm = &p->samples[p->sampleHead++ % PP_SAMPLES];
+
+		p->sampleTime = cls.realtime;
+		sm->targetTime = p->snap.servertime + (int)(lead * 1000.0f);
+		FastVectorCopy (p->shown, sm->shown);
+		FastVectorCopy (raw, sm->raw);
+	}
 
 	if (cl_predict_players_debug->intvalue == entnum || (cl_predict_players_debug->intvalue == -1 && cls.realtime - pp_debugTime >= 500))
 	{
