@@ -2431,15 +2431,46 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLin
 	// With display scaling above 100%, Windows otherwise pretends the screen
 	// is smaller and stretches our window, so a 3840x2160 mode would neither
 	// fit nor be sharp. Ask for real pixels.
+	//
+	// It has to be per-monitor awareness. With the older system-wide kind,
+	// Windows remembers the desktop's scaling (say 150%), and when we switch
+	// to a fullscreen mode like 800x600, where the scaling drops to 100%, it
+	// shrinks our window by that factor: the game ends up in a corner.
 	{
 		HMODULE	user32 = GetModuleHandle ("user32.dll");
+		HMODULE	shcore;
+		BOOL	(WINAPI *setContext)(HANDLE) = NULL;
+		HRESULT	(WINAPI *setAwareness)(int) = NULL;
 		BOOL	(WINAPI *setAware)(void) = NULL;
+		BOOL	done = FALSE;
 
+		// Windows 10 1703 and later: per monitor v2 (-4), else per monitor (-3)
 		if (user32)
-			setAware = (BOOL (WINAPI *)(void))GetProcAddress (user32, "SetProcessDPIAware");
+			setContext = (BOOL (WINAPI *)(HANDLE))GetProcAddress (user32, "SetProcessDpiAwarenessContext");
 
-		if (setAware)
-			setAware ();
+		if (setContext)
+			done = setContext ((HANDLE)(LONG_PTR)-4) || setContext ((HANDLE)(LONG_PTR)-3);
+
+		// Windows 8.1: PROCESS_PER_MONITOR_DPI_AWARE
+		if (!done)
+		{
+			shcore = LoadLibrary ("shcore.dll");
+			if (shcore)
+				setAwareness = (HRESULT (WINAPI *)(int))GetProcAddress (shcore, "SetProcessDpiAwareness");
+
+			if (setAwareness)
+				done = (setAwareness (2) == S_OK);
+		}
+
+		// Vista / 7: all there is
+		if (!done)
+		{
+			if (user32)
+				setAware = (BOOL (WINAPI *)(void))GetProcAddress (user32, "SetProcessDPIAware");
+
+			if (setAware)
+				setAware ();
+		}
 	}
 
     /* previous instances do not exist in Win32 */
