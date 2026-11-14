@@ -8,7 +8,7 @@ Quake II / R1Q2 server; nothing is needed on the server side.
 Additions:
 
 - [Prediction of other players](#player-prediction) (off by default)
-- [Immediate feedback for your own weapons](#weapon-prediction) (off by default)
+- [Immediate feedback for your own weapons](#weapon-prediction) (comes with player prediction)
 - [Widescreen video modes and automatic FOV](#video-modes-and-fov)
 - [Scaling of the HUD, scores, console and crosshair](#hud-scaling)
 - 24-bit FPU precision fix, so movement feels the same as in the original builds
@@ -190,11 +190,15 @@ the sound, the gun moving in your hand, the railgun trail) therefore comes one
 ping after you pulled the trigger, and at a ping of 150 ms that is clearly
 noticeable.
 
-With `cl_predict_weapons 1` (menu: **Multiplayer > Player prediction >
-Predict own weapons**, off by default) the client runs the same weapon logic
-as the game itself and shows those things the moment you press fire. When the
-server's own report of the shot arrives, it is recognised and not shown a
-second time.
+Weapon prediction is part of player prediction: it is in use whenever player
+prediction is (`cl_predict_players 1` and a ping of 100 ms or more), and never
+otherwise, so a normal configuration is not affected. The client then runs the
+same weapon logic as the game itself and shows those things the moment you
+press fire. When the server's own report of the shot arrives, it is recognised
+and not shown a second time.
+
+To use player prediction without it, set `cl_predict_weapons 0` (menu:
+**Multiplayer > Player prediction > Predict own weapons**; default `1`).
 
 | Shown at once                              | Still comes from the server, one ping later |
 |--------------------------------------------|---------------------------------------------|

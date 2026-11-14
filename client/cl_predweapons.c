@@ -156,7 +156,7 @@ CL_WP_Init
 */
 void CL_WP_Init (void)
 {
-	cl_predict_weapons = Cvar_Get ("cl_predict_weapons", "0", CVAR_ARCHIVE);
+	cl_predict_weapons = Cvar_Get ("cl_predict_weapons", "1", CVAR_ARCHIVE);
 	cl_predict_weapons_debug = Cvar_Get ("cl_predict_weapons_debug", "0", 0);
 }
 
@@ -193,7 +193,8 @@ static qboolean WP_Allowed (void)
 {
 	const player_state_t	*ps;
 
-	if (!cl_predict_weapons->intvalue)
+	// part of player prediction: only in use while that is
+	if (!cl_predict_weapons->intvalue || !CL_PP_Active ())
 		return false;
 
 	if (cls.state != ca_active || cl.attractloop || !cl.frame.valid)

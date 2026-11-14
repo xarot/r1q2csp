@@ -554,8 +554,8 @@ static const char *prediction_help[5][4] =
 	{
 		"Shows your own shot the moment you pull",
 		"the trigger: flash, sound, gun movement",
-		"and railgun trail, instead of one ping",
-		"later. The server still decides hits."
+		"and railgun trail. Only works together",
+		"with player prediction."
 	}
 };
 

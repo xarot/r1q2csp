@@ -1939,3 +1939,16 @@ void CL_PP_ShotTrace (vec3_t start, vec3_t end, vec3_t out)
 
 	FastVectorCopy (t.endpos, *out);
 }
+
+/*
+=================
+CL_PP_Active
+
+Is prediction of other players in use right now? (switched on, in a
+multiplayer game, and the ping is high enough)
+=================
+*/
+qboolean CL_PP_Active (void)
+{
+	return PP_Enabled ();
+}

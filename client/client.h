@@ -824,6 +824,7 @@ qboolean CL_PP_GetShownOrigin (int entnum, vec3_t out);
 void CL_PP_RenderFrame (void);
 void CL_PP_LogShot (int weapon);
 void CL_PP_LogImpact (int type, vec3_t pos);
+qboolean CL_PP_Active (void);
 qboolean CL_PP_CommandTime (double *serverTime, float *rtt);
 void CL_PP_ShotTrace (vec3_t start, vec3_t end, vec3_t out);
 
