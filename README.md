@@ -10,7 +10,7 @@ Quake II / R1Q2 server; nothing is needed on the server side.
 Additions:
 
 - [Prediction of other players](#player-prediction) (off by default)
-- [Immediate feedback for your own weapons](#weapon-prediction) (comes with player prediction)
+- [Earlier feedback for your own weapons](#weapon-prediction) (comes with player prediction)
 - [Widescreen video modes and automatic FOV](#video-modes-and-fov)
 - [Scaling of the HUD, scores, console and crosshair](#hud-scaling)
 - 24-bit FPU precision fix, so movement feels the same as in the original builds
@@ -40,7 +40,8 @@ used to get ahead of players with a good connection:
 - **It only uses what the server sends to every client.** The prediction works
   from the positions of the players the client is drawing anyway. It reads
   nothing hidden, shows nothing that would not be on screen otherwise, and
-  does not aim or shoot for you.
+  does not aim or shoot for you. The weapon part only changes when your own
+  shot is shown to you, not when or where it is fired.
 - **Nothing changes on the server.** The client sends the same commands as
   any other client, and the server decides every hit exactly as before.
 - **It only makes up for ping.** What you see is roughly what a player with a
