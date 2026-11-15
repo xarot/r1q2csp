@@ -10,6 +10,7 @@ Quake II / R1Q2 server; nothing is needed on the server side.
 Additions:
 
 - [Prediction of other players](#player-prediction) (off by default)
+- [Earlier feedback for your own weapons](#weapon-prediction) (comes with player prediction)
 - [Widescreen video modes and automatic FOV](#video-modes-and-fov)
 - [Scaling of the HUD, scores, console and crosshair](#hud-scaling)
 - 24-bit FPU precision fix, so movement feels the same as in the original builds
@@ -39,7 +40,8 @@ used to get ahead of players with a good connection:
 - **It only uses what the server sends to every client.** The prediction works
   from the positions of the players the client is drawing anyway. It reads
   nothing hidden, shows nothing that would not be on screen otherwise, and
-  does not aim or shoot for you.
+  does not aim or shoot for you. The weapon part only changes when your own
+  shot is shown to you, not when or where it is fired.
 - **Nothing changes on the server.** The client sends the same commands as
   any other client, and the server decides every hit exactly as before.
 - **It only makes up for ping.** What you see is roughly what a player with a
@@ -116,6 +118,7 @@ console. They are saved in your config.
 | Ping compensation     | `cl_predict_players_maxping` | `50`    | How many milliseconds of your ping are compensated at most. |
 | Smoothing             | `cl_predict_players_smooth`  | `30`    | Time in milliseconds over which a correction is blended in. |
 | Fine tuning           | `cl_predict_players_offset`  | `0`     | Milliseconds added to (or, negative, taken from) the measured ping. |
+| Predict own weapons   | `cl_predict_weapons`         | `1`     | Shows your own shots early while player prediction is in use; see [Weapon prediction](#weapon-prediction). |
 
 **Ping compensation** decides how far ahead the client guesses. The delay of
 the server updates (about 100 ms) is always compensated; on top of that comes
@@ -132,6 +135,9 @@ your ping, up to this limit. What is left over you still lead yourself:
 | 150 ms    | 75      | 75 ms             | 250 ms                   | about 75%                |
 | 150 ms    | 100     | 50 ms             | 250 ms                   | about 65%                |
 | 150 ms    | 150     | none              | 250 ms                   | about 50%                |
+| 200 ms    | 50      | 150 ms            | 300 ms                   | about 85%                |
+| 200 ms    | 100     | 100 ms            | 300 ms                   | about 65%                |
+| 200 ms    | 200     | none              | 300 ms                   | about 40%                |
 
 A higher value means less leading, but more guessing. The last column depends
 only on how much ping is actually compensated (your ping or the setting,
@@ -169,6 +175,11 @@ harder to hit.
 consistently drawn too far back or too far ahead. Raise it if you still have
 to lead such a player, lower it if your shots pass in front of them. It is
 normally left at 0.
+
+It only has an effect while your ping plus this value is below the ping
+compensation; above that the compensation limit decides. It is also counted
+into the delay of [weapon prediction](#weapon-prediction), so a positive value
+at a high ping only makes your own shots show later.
 
 ### Why not simply compensate the whole ping?
 
@@ -227,6 +238,94 @@ The header of each log file explains its fields. `tools\pplog\` has two awk
 scripts that summarise a log: `shot_stats.awk` (hits and misses by cause) and
 `movement_replay.awk` (how well different forecast lengths would have done on
 the recorded movement).
+
+## Weapon prediction
+
+### What it does
+
+In Quake II the server decides when your weapon fires and tells the client
+afterwards. Everything you see and hear of your own shot (the muzzle flash,
+the sound, the gun moving in your hand, the railgun trail) therefore comes one
+ping after you pulled the trigger, and at a ping of 150 ms that is clearly
+noticeable.
+
+Weapon prediction is part of player prediction: it is in use whenever player
+prediction is (`cl_predict_players 1` and a ping of 100 ms or more), and never
+otherwise, so a normal configuration is not affected. The client then runs the
+same weapon logic as the game itself and shows those things ahead of the
+server (how far ahead is explained below). When the server's own report of the
+shot arrives, it is recognised and not shown a second time.
+
+To use player prediction without it, set `cl_predict_weapons 0` (menu:
+**Multiplayer > Player prediction > Predict own weapons**; default `1`).
+
+| Shown early                                | Still comes from the server, one ping later |
+|--------------------------------------------|---------------------------------------------|
+| muzzle flash and firing sound              | rockets, grenades, blaster bolts and the BFG ball appearing |
+| the gun's firing and reload animation      | bullet and pellet impacts, blood, explosions |
+| the railgun trail                          | the view kick, quad damage sound, chaingun spin sounds |
+| repeat fire while the button is held       | hand grenades (not predicted at all) |
+
+Projectiles are left to the server on purpose. One drawn at once would have
+to jump backwards when the real one appears, because the real one only leaves
+the gun when your command reaches the server.
+
+### How much of the delay is removed
+
+Not all of it, on purpose. What you see of a shot is held back by the part of
+your ping that is not compensated:
+
+    delay = your ping - ping compensation   (never below 0)
+
+That is the same amount you still have to lead by. With the whole ping
+compensated the shot shows at once.
+
+| Your ping | Ping compensation | Shot shows after the click | Normal game |
+|-----------|-------------------|----------------------------|-------------|
+| 150 ms    | 50                | 100 ms                     | 150 ms      |
+| 150 ms    | 100               | 50 ms                      | 150 ms      |
+| 200 ms    | 50                | 150 ms                     | 200 ms      |
+| 200 ms    | 100               | 100 ms                     | 200 ms      |
+
+The reason is what the picture means. The shot is decided when it reaches the
+server, and the result (blood, impacts, the other player's pain or death)
+comes back one ping after the click. If the shot were shown at once, you
+would see it fire at the target, then a pause, and only then a hit or a miss.
+You would also see it against players who still have time to move before the
+shot arrives, so a railgun trail could go straight through someone and not
+count. Held back by this amount, the players on screen are where they were
+when the server decided the shot. The trail goes through the players it
+really went through, and the result follows shortly after.
+
+`cl_predict_weapons_delay` overrides this: `-1` (default) is automatic, `0`
+shows every shot at once, and any other value is a fixed delay in
+milliseconds.
+
+### Limits
+
+- It needs the gun to be drawn: with `cl_gun 0` an R1Q2 server does not send
+  the weapon's animation at all, and nothing is predicted.
+- It knows the ten standard weapons by their view models. With any other
+  weapon (mods with their own guns) it does nothing and the server's feedback
+  is shown as before.
+- If a server's weapons behave differently from the standard game (other fire
+  rates, for example), predicted shots will not be confirmed. After three in a
+  row the prediction switches itself off for five seconds at a time.
+- A predicted shot can be wrong: for example when you die, run out of ammo or
+  the server switches your weapon in the instant before your command arrives.
+  You then see and hear a shot that never happened. The railgun trail is the
+  most visible case.
+- For a short moment after you change weapons nothing is predicted, because
+  the client cannot know yet which weapon the server will fire.
+- A silencer is only known after the first confirmed shot, so the first
+  silenced shot sounds loud to you.
+
+With `cl_predict_players_log 1` the shot log also gets a `WPN` line for every
+weapon prediction event: button presses, predicted shots, when they were
+shown, the server's confirmation and how long it took, shots that were not
+predicted or never confirmed, and the server's gun frame against the
+predicted one for every server frame while firing. `cl_predict_weapons_debug 1`
+prints the same lines to the console.
 
 ## Video modes and FOV
 

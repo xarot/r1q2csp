@@ -1517,6 +1517,17 @@ static void PP_LogOpen (void)
 		"# ACC     once a second: average error of everything drawn (see cl_predict_players_debug -2)\n"
 		"# TRK     every server frame, every visible player: frame, our clock, entity, origin,\n"
 		"#         angles (pitch yaw), animation frame, ground/no-gravity flags, velocity used\n"
+		"# WPN     weapon prediction (t = our clock, f = server frame the weapon state belongs to):\n"
+		"#   PRESS/RELEASE  attack button in a command sent to the server\n"
+		"#   SHOT           a shot predicted: mz weapon, gun frame, ping, delay before it is shown, ammo left\n"
+		"#   SHOWN          its flash and sound played (late = ms after SHOT)\n"
+		"#   CONFIRM        the server reported it (after = ms since SHOT; shown=0: the server was first)\n"
+		"#   UNEXPECTED     the server reported a shot that was not predicted\n"
+		"#   EXPIRED        a predicted shot the server never reported\n"
+		"#   GUN            each server frame while firing: the server's gun frame and ours for that frame\n"
+		"#   RESYNC         ours did not match and was rebuilt from the server's\n"
+		"#   RAIL           predicted trail; RAILCONFIRM: distance of the server's trail start from ours\n"
+		"#   BLOCK/SUSPEND  no shots predicted for a while (weapon change / too many EXPIRED)\n"
 		"#\n");
 	fflush (pp_logFile);
 
@@ -1885,4 +1896,85 @@ static void PP_LogFrame (void)
 
 	pp_ackPrev = pp_ackNow;
 	pp_ackNow = cls.netchan.incoming_acknowledged;
+}
+
+/*
+=================
+CL_PP_CommandTime
+
+The server time (ms) at which a command sent right now will be run, and
+the round trip time that estimate is based on. False until both are known.
+=================
+*/
+qboolean CL_PP_CommandTime (double *serverTime, float *rtt)
+{
+	if (!pp_clockValid || !pp_rttCount)
+		return false;
+
+	*serverTime = ((double)cls.realtime - pp_clockOffset) + (double)pp_rtt;
+	*rtt = pp_rtt;
+	return true;
+}
+
+/*
+=================
+CL_PP_ShotTrace
+
+Where a shot from start towards end is stopped by the map: the world and
+its doors, lifts and other brush models. Players do not stop it.
+=================
+*/
+void CL_PP_ShotTrace (vec3_t start, vec3_t end, vec3_t out)
+{
+	trace_t			t, trace;
+	int				i;
+	entity_state_t	*ent;
+	cmodel_t		*cmodel;
+	const int		mask = CONTENTS_SOLID|CONTENTS_WINDOW;
+
+	t = CM_BoxTrace (start, end, vec3_origin, vec3_origin, 0, mask);
+
+	for (i = 0; i < pp_numBmodels; i++)
+	{
+		ent = pp_bmodels[i];
+		cmodel = cl.model_clip[ent->modelindex];
+		if (!cmodel)
+			continue;
+
+		trace = CM_TransformedBoxTrace (start, end, vec3_origin, vec3_origin, cmodel->headnode,
+			mask, ent->origin, ent->angles);
+
+		if (trace.fraction < t.fraction)
+			t = trace;
+	}
+
+	FastVectorCopy (t.endpos, *out);
+}
+
+/*
+=================
+CL_PP_Active
+
+Is prediction of other players in use right now? (switched on, in a
+multiplayer game, and the ping is high enough)
+=================
+*/
+qboolean CL_PP_Active (void)
+{
+	return PP_Enabled ();
+}
+
+/*
+=================
+CL_PP_LogLine
+
+Adds a line from elsewhere in the client to the shot log, if one is open
+=================
+*/
+void CL_PP_LogLine (const char *text)
+{
+	if (!pp_logFile)
+		return;
+
+	fprintf (pp_logFile, "%s\n", text);
 }

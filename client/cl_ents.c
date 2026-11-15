@@ -1516,6 +1516,7 @@ void CL_ParseFrame (int extrabits)
 
 		// new forecast base for the other players
 		CL_PP_NewFrame ();
+		CL_WP_NewFrame ();
 	}
 
 	if (cl.settings[SVSET_PLAYERUPDATES])
@@ -2360,6 +2361,20 @@ static void CL_AddViewWeapon (const player_state_t *ps, const player_state_t *op
 
 	gun.backlerp = gunlerp;
 
+	// our own weapon firing ahead of the server
+	if (!gun_frame)
+	{
+		int		wpframe, wpoldframe;
+		float	wpbacklerp;
+
+		if (CL_WP_GunFrame (&wpframe, &wpoldframe, &wpbacklerp))
+		{
+			gun.frame = wpframe;
+			gun.oldframe = wpoldframe;
+			gun.backlerp = wpbacklerp;
+		}
+	}
+
 	// set up gun position
 	for (i=0 ; i<3 ; i++)
 	{
@@ -2612,6 +2627,7 @@ void CL_AddEntities (void)
 
 	CL_CalcViewValues ();
 	CL_PP_RenderFrame ();
+	CL_WP_RenderFrame ();
 	// PMM - moved this here so the heat beam has the right values for the vieworg, and can lock the beam to the gun
 	CL_AddPacketEntities (&cl.frame);
 	if (cl_lents->intvalue)

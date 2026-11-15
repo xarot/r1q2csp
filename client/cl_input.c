@@ -432,6 +432,8 @@ void CL_FinalizeCmd (void)
 	if ( in_attack.state & 3 )
 		cmd->buttons |= BUTTON_ATTACK;
 
+	CL_WP_Input ((cmd->buttons & BUTTON_ATTACK) != 0);
+
 	in_attack.state &= ~2;
 
 	if (in_use.state & 3)
@@ -609,6 +611,8 @@ void CL_FinishMove (usercmd_t *cmd)
 
 	if ( in_attack.state & 3 )
 		cmd->buttons |= BUTTON_ATTACK;
+	CL_WP_Input ((cmd->buttons & BUTTON_ATTACK) != 0);
+
 	in_attack.state &= ~2;
 	
 	if (in_use.state & 3)

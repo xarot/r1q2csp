@@ -576,6 +576,8 @@ void Cmd_ForwardToServer (void)
 
 	Com_DPrintf ("Cmd_ForwardToServer: forwarding '%s'\n", cmd);
 
+	CL_WP_Command (cmd);
+
 	//Com_Printf ("fwd: %s %s\n", cmd, Cmd_Args());
 
 	MSG_BeginWriting (clc_stringcmd);
@@ -1158,6 +1160,7 @@ void CL_ClearState (void)
 	Le_Reset ();
 
 	CL_PP_Reset ();
+	CL_WP_Reset ();
 
 	//r1: reset
 	cl.maxclients = MAX_CLIENTS;
@@ -3541,6 +3544,7 @@ void CL_InitLocal (void)
 //	cl_autoskins = Cvar_Get ("cl_autoskins", "0", 0);
 	cl_predict = Cvar_Get ("cl_predict", "1", 0);
 	CL_PP_Init ();
+	CL_WP_Init ();
 	cl_backlerp = Cvar_Get ("cl_backlerp", "1", 0);
 //	cl_minfps = Cvar_Get ("cl_minfps", "5", 0);
 

@@ -243,13 +243,8 @@ CL_ParseMuzzleFlash
 */
 void CL_ParseMuzzleFlash (void)
 {
-	vec3_t		fv, rv, base_origin;
-	cdlight_t	*dl;
 	int			i, weapon;
-	centity_t	*pl;
 	int			silenced;
-	float		volume;
-	char		soundname[64];
 
 	i = MSG_ReadShort (&net_message);
 	if (i < 1 || i >= MAX_EDICTS)
@@ -261,7 +256,31 @@ void CL_ParseMuzzleFlash (void)
 
 	// the server confirming one of our own shots
 	if (i == cl.playernum + 1)
+	{
 		CL_PP_LogShot (weapon);
+
+		// already shown when the trigger was pulled
+		if (CL_WP_ConfirmShot (weapon, silenced))
+			return;
+	}
+
+	CL_MuzzleFlash (i, weapon, silenced);
+}
+
+/*
+==============
+CL_MuzzleFlash
+
+The light and sound of entity i firing a weapon
+==============
+*/
+void CL_MuzzleFlash (int i, int weapon, int silenced)
+{
+	vec3_t		fv, rv, base_origin;
+	cdlight_t	*dl;
+	centity_t	*pl;
+	float		volume;
+	char		soundname[64];
 
 	pl = &cl_entities[i];
 

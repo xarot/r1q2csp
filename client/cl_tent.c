@@ -808,6 +808,48 @@ void CL_ExplosionDebris (vec3_t origin)
 
 /*
 =================
+CL_RailTrailEffect
+
+Draws a railgun trail in the style chosen with cl_railtrail and plays
+its sound. Used for trails sent by the server and for predicted ones.
+=================
+*/
+void CL_RailTrailEffect (vec3_t pos, vec3_t pos2)
+{
+	switch (cl_railtrail->intvalue)
+	{
+		case 0:
+			CL_RailTrail (pos, pos2, 179);
+			break;
+		case 1:
+			CL_ParseLaser (0xf2f2f0f0, pos, pos2);
+			break;
+
+		case 2:
+			CL_ParseLaser (0xd0d1d2d3, pos, pos2);
+			break;
+
+		case 3:
+			CL_ParseLaser (0xf3f3f1f1, pos, pos2);
+			break;
+
+		case 4:
+			CL_ParseLaser (0xdcdddedf, pos, pos2);
+			break;
+
+		case 5:
+			CL_ParseLaser (0xe0e1e2e3, pos, pos2);
+			break;
+		default:
+			CL_RailTrail (pos, pos2, (byte)(cl_railtrail->intvalue - 6));
+			break;
+
+	}
+	S_StartSound (pos2, 0, 0, cl_sfx_railg, 1, ATTN_NORM, 0);
+}
+
+/*
+=================
 CL_ParseTEnt
 =================
 */
@@ -973,36 +1015,11 @@ void CL_ParseTEnt (void)
 		MSG_ReadPos (&net_message, pos);
 		MSG_ReadPos (&net_message, pos2);
 
-		switch (cl_railtrail->intvalue)
-		{
-			case 0:
-				CL_RailTrail (pos, pos2, 179);
-				break;
-			case 1:
-				CL_ParseLaser (0xf2f2f0f0, pos, pos2);
-				break;
+		// our own shot, already drawn when the trigger was pulled
+		if (CL_WP_ConfirmRail (pos))
+			break;
 
-			case 2:
-				CL_ParseLaser (0xd0d1d2d3, pos, pos2);
-				break;
-
-			case 3:
-				CL_ParseLaser (0xf3f3f1f1, pos, pos2);
-				break;
-
-			case 4:
-				CL_ParseLaser (0xdcdddedf, pos, pos2);
-				break;
-
-			case 5:
-				CL_ParseLaser (0xe0e1e2e3, pos, pos2);
-				break;
-			default:
-				CL_RailTrail (pos, pos2, (byte)(cl_railtrail->intvalue - 6));
-				break;
-
-		}
-		S_StartSound (pos2, 0, 0, cl_sfx_railg, 1, ATTN_NORM, 0);
+		CL_RailTrailEffect (pos, pos2);
 		break;
 
 	case TE_EXPLOSION2:
