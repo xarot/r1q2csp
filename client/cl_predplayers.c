@@ -1517,6 +1517,17 @@ static void PP_LogOpen (void)
 		"# ACC     once a second: average error of everything drawn (see cl_predict_players_debug -2)\n"
 		"# TRK     every server frame, every visible player: frame, our clock, entity, origin,\n"
 		"#         angles (pitch yaw), animation frame, ground/no-gravity flags, velocity used\n"
+		"# WPN     weapon prediction (t = our clock, f = server frame the weapon state belongs to):\n"
+		"#   PRESS/RELEASE  attack button in a command sent to the server\n"
+		"#   SHOT           a shot predicted: mz weapon, gun frame, ping, delay before it is shown, ammo left\n"
+		"#   SHOWN          its flash and sound played (late = ms after SHOT)\n"
+		"#   CONFIRM        the server reported it (after = ms since SHOT; shown=0: the server was first)\n"
+		"#   UNEXPECTED     the server reported a shot that was not predicted\n"
+		"#   EXPIRED        a predicted shot the server never reported\n"
+		"#   GUN            each server frame while firing: the server's gun frame and ours for that frame\n"
+		"#   RESYNC         ours did not match and was rebuilt from the server's\n"
+		"#   RAIL           predicted trail; RAILCONFIRM: distance of the server's trail start from ours\n"
+		"#   BLOCK/SUSPEND  no shots predicted for a while (weapon change / too many EXPIRED)\n"
 		"#\n");
 	fflush (pp_logFile);
 
@@ -1951,4 +1962,19 @@ multiplayer game, and the ping is high enough)
 qboolean CL_PP_Active (void)
 {
 	return PP_Enabled ();
+}
+
+/*
+=================
+CL_PP_LogLine
+
+Adds a line from elsewhere in the client to the shot log, if one is open
+=================
+*/
+void CL_PP_LogLine (const char *text)
+{
+	if (!pp_logFile)
+		return;
+
+	fprintf (pp_logFile, "%s\n", text);
 }

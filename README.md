@@ -263,8 +263,12 @@ milliseconds.
 - A silencer is only known after the first confirmed shot, so the first
   silenced shot sounds loud to you.
 
-`cl_predict_weapons_debug 1` prints every predicted shot, every confirmation
-and every correction to the console.
+With `cl_predict_players_log 1` the shot log also gets a `WPN` line for every
+weapon prediction event: button presses, predicted shots, when they were
+shown, the server's confirmation and how long it took, shots that were not
+predicted or never confirmed, and the server's gun frame against the
+predicted one for every server frame while firing. `cl_predict_weapons_debug 1`
+prints the same lines to the console.
 
 ## Video modes and FOV
 

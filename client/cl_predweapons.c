@@ -212,6 +212,33 @@ void CL_WP_Reset (void)
 
 /*
 =================
+WP_Log
+
+A line for the shot log (cl_predict_players_log), and for the console
+with cl_predict_weapons_debug
+=================
+*/
+static void WP_Log (const char *fmt, ...)
+{
+	va_list	argptr;
+	char	text[512];
+	char	line[600];
+
+	va_start (argptr, fmt);
+	Q_vsnprintf (text, sizeof(text), fmt, argptr);
+	va_end (argptr);
+
+	text[sizeof(text)-1] = 0;
+
+	Com_sprintf (line, sizeof(line), "WPN t=%d %s", cls.realtime, text);
+	CL_PP_LogLine (line);
+
+	if (cl_predict_weapons_debug->intvalue)
+		Com_Printf ("%s\n", LOG_CLIENT, line);
+}
+
+/*
+=================
 WP_Allowed
 
 Is there a weapon in our hands that we know how to follow?
@@ -377,6 +404,8 @@ static void WP_Rail (void)
 	FastVectorCopy (start, wp_railStart);
 	FastVectorCopy (end, wp_railEnd);
 
+	WP_Log ("RAIL start=%.1f %.1f %.1f end=%.1f %.1f %.1f", start[0], start[1], start[2], end[0], end[1], end[2]);
+
 	delay = WP_Delay ();
 	if (delay < 1)
 	{
@@ -417,8 +446,7 @@ static void WP_Shot (int weapon, int cost)
 
 	delay = WP_Delay ();
 
-	if (cl_predict_weapons_debug->intvalue)
-		Com_Printf ("WP: shot %d at frame %d, ping %.0f ms, shown after %d ms\n", LOG_CLIENT, weapon, wp.tick, wp_rtt, delay);
+	WP_Log ("SHOT mz=%d f=%d gun=%d ping=%.0f delay=%d ammo=%d", weapon, wp.tick, wp.gunframe, wp_rtt, delay, WP_Ammo ());
 
 	if (delay < 1)
 	{
@@ -755,8 +783,8 @@ static void WP_Resync (const wpdef_t *d)
 {
 	int		g = cl.frame.playerstate.gunframe;
 
-	if (cl_predict_weapons_debug->intvalue && wp.valid)
-		Com_Printf ("WP: resync at frame %d, server gun frame %d, ours %d\n", LOG_CLIENT, cl.frame.serverframe,
+	if (wp.valid)
+		WP_Log ("RESYNC srvframe=%d srv_gun=%d our_gun=%d", cl.frame.serverframe,
 			g, wp_history[cl.frame.serverframe & (WP_HISTORY-1)].gunframe);
 
 	if (wp.def != d)
@@ -809,14 +837,14 @@ void CL_WP_NewFrame (void)
 		{
 			ev->open = false;
 
-			if (cl_predict_weapons_debug->intvalue)
-				Com_Printf ("WP: shot %d was never confirmed by the server\n", LOG_CLIENT, ev->weapon);
+			WP_Log ("EXPIRED mz=%d", ev->weapon);
 
 			if (++wp_misses >= WP_MAX_MISSES)
 			{
 				// this server's weapons do not behave the way we expect
 				wp_misses = 0;
 				wp_suspendTime = cls.realtime + WP_SUSPEND_TIME;
+				WP_Log ("SUSPEND");
 			}
 		}
 	}
@@ -835,6 +863,16 @@ void CL_WP_NewFrame (void)
 	}
 
 	f = cl.frame.serverframe;
+
+	// the server's weapon frame against ours, whenever either is not idle
+	if (wp.valid && wp.def == d && wp_history[f & (WP_HISTORY-1)].tick == f)
+	{
+		int		sg = cl.frame.playerstate.gunframe;
+		int		og = wp_history[f & (WP_HISTORY-1)].gunframe;
+
+		if (sg <= d->fireLast || sg > d->idleLast || og <= d->fireLast || og > d->idleLast)
+			WP_Log ("GUN srvframe=%d srv=%d ours=%d now=%d state=%d ping=%.0f", f, sg, og, wp.gunframe, wp.state, wp_rtt);
+	}
 
 	if (!wp.valid || wp.def != d || wp.tick < f ||
 		wp_history[f & (WP_HISTORY-1)].tick != f ||
@@ -866,6 +904,9 @@ void CL_WP_Input (qboolean attack)
 		wp.held = attack;
 		return;
 	}
+
+	if (attack != wp.held)
+		WP_Log ("%s f=%d gun=%d state=%d ammo=%d", attack ? "PRESS" : "RELEASE", wp.tick, wp.gunframe, wp.state, WP_Ammo ());
 
 	if (attack && !wp.held)
 		wp.latched = true;
@@ -901,6 +942,7 @@ void CL_WP_RenderFrame (void)
 		{
 			ev->showTime = 0;
 			CL_MuzzleFlash (cl.playernum + 1, ev->weapon, wp_silenced);
+			WP_Log ("SHOWN mz=%d late=%d", ev->weapon, cls.realtime - ev->time);
 		}
 	}
 
@@ -1022,13 +1064,12 @@ qboolean CL_WP_ConfirmShot (int weapon, int silenced)
 
 	if (best == -1)
 	{
-		if (cl_predict_weapons_debug->intvalue && cl_predict_weapons->intvalue)
-			Com_Printf ("WP: shot %d from the server was not expected\n", LOG_CLIENT, weapon);
+		if (wp.valid)
+			WP_Log ("UNEXPECTED mz=%d srvframe=%d", weapon, cl.frame.serverframe);
 		return false;
 	}
 
-	if (cl_predict_weapons_debug->intvalue)
-		Com_Printf ("WP: shot %d confirmed after %d ms\n", LOG_CLIENT, weapon, cls.realtime - wp_events[best].time);
+	WP_Log ("CONFIRM mz=%d after=%d shown=%d srvframe=%d", weapon, cls.realtime - wp_events[best].time, wp_events[best].showTime ? 0 : 1, cl.frame.serverframe);
 
 	wp_events[best].open = false;
 	wp_misses = 0;
@@ -1064,6 +1105,8 @@ qboolean CL_WP_ConfirmRail (vec3_t start)
 	}
 
 	VectorSubtract (start, wp_railStart, d);
+	WP_Log ("RAILCONFIRM dist=%.1f", VectorLength (d));
+
 	if (VectorLength (d) > 96)
 		return false;
 
@@ -1096,5 +1139,7 @@ void CL_WP_Command (const char *cmd)
 		!Q_stricmp ((char *)cmd, "invdrop"))
 	{
 		wp_blockTime = cls.realtime + (int)wp_rtt + 300;
+		if (wp.valid)
+			WP_Log ("BLOCK cmd=%s", cmd);
 	}
 }
