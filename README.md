@@ -176,6 +176,11 @@ consistently drawn too far back or too far ahead. Raise it if you still have
 to lead such a player, lower it if your shots pass in front of them. It is
 normally left at 0.
 
+It only has an effect while your ping plus this value is below the ping
+compensation; above that the compensation limit decides. It is also counted
+into the delay of [weapon prediction](#weapon-prediction), so a positive value
+at a high ping only makes your own shots show later.
+
 ### Why not simply compensate the whole ping?
 
 Because the client would have to know what the other player is going to do
@@ -298,6 +303,8 @@ milliseconds.
 
 ### Limits
 
+- It needs the gun to be drawn: with `cl_gun 0` an R1Q2 server does not send
+  the weapon's animation at all, and nothing is predicted.
 - It knows the ten standard weapons by their view models. With any other
   weapon (mods with their own guns) it does nothing and the server's feedback
   is shown as before.
