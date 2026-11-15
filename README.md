@@ -68,6 +68,7 @@ console. They are saved in your config.
 | Ping compensation     | `cl_predict_players_maxping` | `50`    | How many milliseconds of your ping are compensated at most. |
 | Smoothing             | `cl_predict_players_smooth`  | `30`    | Time in milliseconds over which a correction is blended in. |
 | Fine tuning           | `cl_predict_players_offset`  | `0`     | Milliseconds added to (or, negative, taken from) the measured ping. |
+| Predict own weapons   | `cl_predict_weapons`         | `1`     | Shows your own shots early while player prediction is in use; see [Weapon prediction](#weapon-prediction). |
 
 **Ping compensation** decides how far ahead the client guesses. The delay of
 the server updates (about 100 ms) is always compensated; on top of that comes
@@ -195,8 +196,7 @@ prediction is (`cl_predict_players 1` and a ping of 100 ms or more), and never
 otherwise, so a normal configuration is not affected. The client then runs the
 same weapon logic as the game itself and shows those things ahead of the
 server (how far ahead is explained below). When the server's own report of the
-shot arrives, it is recognised
-and not shown a second time.
+shot arrives, it is recognised and not shown a second time.
 
 To use player prediction without it, set `cl_predict_weapons 0` (menu:
 **Multiplayer > Player prediction > Predict own weapons**; default `1`).
