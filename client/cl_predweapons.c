@@ -745,6 +745,10 @@ static void WP_Advance (void)
 		else
 			WP_Think ();
 
+		// the server forgets a press at the end of every frame: one made
+		// while the weapon was busy does not fire later unless still held
+		wp.latched = false;
+
 		wp_history[wp.tick & (WP_HISTORY-1)].tick = wp.tick;
 		wp_history[wp.tick & (WP_HISTORY-1)].gunframe = wp.gunframe;
 	}
