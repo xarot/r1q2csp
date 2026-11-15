@@ -85,6 +85,9 @@ your ping, up to this limit. What is left over you still lead yourself:
 | 150 ms    | 75      | 75 ms             | 250 ms                   | about 75%                |
 | 150 ms    | 100     | 50 ms             | 250 ms                   | about 65%                |
 | 150 ms    | 150     | none              | 250 ms                   | about 50%                |
+| 200 ms    | 50      | 150 ms            | 300 ms                   | about 85%                |
+| 200 ms    | 100     | 100 ms            | 300 ms                   | about 65%                |
+| 200 ms    | 200     | none              | 300 ms                   | about 40%                |
 
 A higher value means less leading, but more guessing. The last column depends
 only on how much ping is actually compensated (your ping or the setting,
@@ -219,9 +222,15 @@ your ping that is not compensated:
 
     delay = your ping - ping compensation   (never below 0)
 
-That is the same amount you still have to lead by. With a ping of 150 and
-ping compensation at 50, the shot shows 100 ms after the click instead of
-150 ms; with the whole ping compensated it shows at once.
+That is the same amount you still have to lead by. With the whole ping
+compensated the shot shows at once.
+
+| Your ping | Ping compensation | Shot shows after the click | Normal game |
+|-----------|-------------------|----------------------------|-------------|
+| 150 ms    | 50                | 100 ms                     | 150 ms      |
+| 150 ms    | 100               | 50 ms                      | 150 ms      |
+| 200 ms    | 50                | 150 ms                     | 200 ms      |
+| 200 ms    | 100               | 100 ms                     | 200 ms      |
 
 The reason is what the picture means. The shot is decided when it reaches the
 server, and the result (blood, impacts, the other player's pain or death)
