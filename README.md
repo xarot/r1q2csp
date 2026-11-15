@@ -1,5 +1,7 @@
 # R1Q2 (mod)
 
+*Additions by **Dakotha / Clan Kontula**, built on R1Q2 by **R1CH**.*
+
 R1CH's R1Q2 client for Quake II, made to build with Visual Studio 2022, with a
 few additions for playing on modern displays and on servers with some ping.
 It reports itself as `R1Q2 (mod) b8012-premod` and works with any normal
@@ -13,8 +15,55 @@ Additions:
 - [Scaling of the HUD, scores, console and crosshair](#hud-scaling)
 - 24-bit FPU precision fix, so movement feels the same as in the original builds
 
-R1CH's original notes are in `readme.txt` and `r1q2.txt`. Build instructions
-are in `BUILDING-VS2022.md`.
+Build instructions are in `BUILDING-VS2022.md`.
+
+## Why this exists
+
+Quake II is still played all over the world, but there are no longer enough
+players for every region to fill servers of its own. So people from Europe,
+the USA, South America, China and many other places meet on the same servers,
+and whoever lives far from the server plays with a ping of 150, 200 or more.
+
+Quake II has no lag compensation, so that is a heavy handicap. A player with a
+ping of 30 aims about 130 ms ahead of a moving opponent. A player with a ping
+of 200 has to aim about 300 ms ahead, at a spot the opponent may never reach.
+
+The additions in this client are meant to take away part of that handicap, so
+that players from anywhere can gather on one server and have a competitive
+game together, whatever their ping is.
+
+## Fair play
+
+This is not meant to help anyone cheat, and it is built so that it cannot be
+used to get ahead of players with a good connection:
+
+- **It only uses what the server sends to every client.** The prediction works
+  from the positions of the players the client is drawing anyway. It reads
+  nothing hidden, shows nothing that would not be on screen otherwise, and
+  does not aim or shoot for you.
+- **Nothing changes on the server.** The client sends the same commands as
+  any other client, and the server decides every hit exactly as before.
+- **It only makes up for ping.** What you see is roughly what a player with a
+  lower ping sees, and never more than that. Below a ping of 100 ms it does
+  nothing at all, so players who already have a good connection gain nothing.
+- **It is a forecast, not the truth.** An opponent who changes direction is
+  drawn in the wrong place until the next update arrives, so a real low ping
+  is still better than a predicted one.
+- **It does not hide.** The client reports itself as `R1Q2 (mod)` in its
+  version string, and the source is public.
+
+## Credits
+
+R1Q2 is the work of **R1CH**. The client this is built on, with its network
+and security fixes, its many improvements over the original Quake II and the
+R1GL renderer, is his, and it is the reason Quake II is still as playable
+online as it is. All of that is kept as he wrote it; the additions are a small
+layer on top. His homepage for the project is http://www.r1ch.net/stuff/r1q2/
+and his original notes are in `readme.txt` and `r1q2.txt`.
+
+Quake II itself is by id Software, released under the GPL.
+
+The additions listed above were made by **Dakotha / Clan Kontula**.
 
 ## Installing
 
