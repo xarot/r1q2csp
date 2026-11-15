@@ -38,7 +38,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 cvar_t	*cl_predict_weapons;
 cvar_t	*cl_predict_weapons_debug;
-cvar_t	*cl_predict_weapons_raildelay;
+cvar_t	*cl_predict_weapons_delay;
 
 extern cvar_t	*cl_predict_players_maxping;
 extern cvar_t	*cl_predict_players_offset;
@@ -129,6 +129,7 @@ typedef struct
 	int			weapon;		// MZ_*
 	int			time;
 	int			cost;		// ammo
+	int			showTime;	// when to show it; 0 once shown
 } wpevent_t;
 
 static wpevent_t	wp_events[WP_EVENTS];
@@ -155,6 +156,21 @@ static struct
 	int			holdTime;
 } wp_gun;
 
+// changes of the weapon frame that are still to be shown
+#define	WP_GUNQUEUE		32
+
+static struct
+{
+	int			time;
+	int			frame;
+	qboolean	firing;
+} wp_gunQueue[WP_GUNQUEUE];
+
+static int			wp_gunHead, wp_gunTail;
+static int			wp_gunQueuedFrame;
+static qboolean		wp_gunQueuedFiring;
+static qboolean		wp_gunFiring;
+
 /*
 =================
 CL_WP_Init
@@ -164,7 +180,7 @@ void CL_WP_Init (void)
 {
 	cl_predict_weapons = Cvar_Get ("cl_predict_weapons", "1", CVAR_ARCHIVE);
 	cl_predict_weapons_debug = Cvar_Get ("cl_predict_weapons_debug", "0", 0);
-	cl_predict_weapons_raildelay = Cvar_Get ("cl_predict_weapons_raildelay", "-1", CVAR_ARCHIVE);
+	cl_predict_weapons_delay = Cvar_Get ("cl_predict_weapons_delay", "-1", CVAR_ARCHIVE);
 }
 
 /*
@@ -188,6 +204,10 @@ void CL_WP_Reset (void)
 	wp_rtt = 0;
 	wp_railTime = 0;
 	wp_railDrawTime = 0;
+	wp_gunHead = wp_gunTail = 0;
+	wp_gunQueuedFrame = -1;
+	wp_gunQueuedFiring = false;
+	wp_gunFiring = false;
 }
 
 /*
@@ -285,24 +305,24 @@ static int WP_Ammo (void)
 
 /*
 =================
-WP_RailDelay
+WP_Delay
 
-How long to hold back the railgun trail, in ms.
+How long to hold back what is shown of a shot, in ms.
 
 Other players are drawn ahead of the server's picture by the part of the
 ping that is compensated. The shot is decided when it reaches the server,
 and the players on screen are where they were at that moment only after
-the part of the ping that is not compensated has passed. A trail drawn
-then goes through the players it really went through; drawn at once, it
-would show a hit on someone who still has time to move out of the way.
+the part of the ping that is not compensated has passed. A shot shown
+then is seen against the players it was really fired at; shown at once,
+it would be seen against players who still have time to move away.
 =================
 */
-static int WP_RailDelay (void)
+static int WP_Delay (void)
 {
 	float	ping, comp;
 
-	if (cl_predict_weapons_raildelay->value >= 0)
-		return (int)cl_predict_weapons_raildelay->value;
+	if (cl_predict_weapons_delay->value >= 0)
+		return (int)cl_predict_weapons_delay->value;
 
 	ping = wp_rtt + cl_predict_players_offset->value;
 	if (ping < 0)
@@ -357,7 +377,7 @@ static void WP_Rail (void)
 	FastVectorCopy (start, wp_railStart);
 	FastVectorCopy (end, wp_railEnd);
 
-	delay = WP_RailDelay ();
+	delay = WP_Delay ();
 	if (delay < 1)
 	{
 		CL_RailTrailEffect (start, end);
@@ -380,6 +400,7 @@ shot is still to come.
 static void WP_Shot (int weapon, int cost)
 {
 	wpevent_t	*ev;
+	int			delay;
 
 	if (!WP_CanShow ())
 		return;
@@ -390,13 +411,24 @@ static void WP_Shot (int weapon, int cost)
 	ev->time = cls.realtime;
 	ev->cost = cost;
 
-	CL_MuzzleFlash (cl.playernum + 1, weapon, wp_silenced);
-
+	// the trail is where the shot goes now, whenever it is drawn
 	if (weapon == MZ_RAILGUN)
 		WP_Rail ();
 
+	delay = WP_Delay ();
+
 	if (cl_predict_weapons_debug->intvalue)
-		Com_Printf ("WP: shot %d shown at frame %d + %.0f ms, gun frame %d\n", LOG_CLIENT, weapon, wp.tick, wp_rtt, wp.gunframe);
+		Com_Printf ("WP: shot %d at frame %d, ping %.0f ms, shown after %d ms\n", LOG_CLIENT, weapon, wp.tick, wp_rtt, delay);
+
+	if (delay < 1)
+	{
+		ev->showTime = 0;
+		CL_MuzzleFlash (cl.playernum + 1, weapon, wp_silenced);
+	}
+	else
+	{
+		ev->showTime = cls.realtime + delay;
+	}
 }
 
 /*
@@ -613,12 +645,32 @@ Start moving the gun model whenever the weapon frame has changed
 */
 static void WP_UpdateGun (void)
 {
-	if (wp.gunframe == wp_gun.to)
+	qboolean	firing = (wp.state == WS_FIRING);
+	int			time, last;
+
+	if (wp.gunframe == wp_gunQueuedFrame && firing == wp_gunQueuedFiring)
 		return;
 
-	wp_gun.from = wp_gun.active ? wp_gun.to : cl.frame.playerstate.gunframe;
-	wp_gun.to = wp.gunframe;
-	wp_gun.start = cls.realtime;
+	wp_gunQueuedFrame = wp.gunframe;
+	wp_gunQueuedFiring = firing;
+
+	time = cls.realtime + WP_Delay ();
+
+	// keep them in order should the delay have shrunk
+	if (wp_gunHead != wp_gunTail)
+	{
+		last = wp_gunQueue[(wp_gunHead - 1) & (WP_GUNQUEUE-1)].time;
+		if (time < last)
+			time = last;
+	}
+
+	if (wp_gunHead - wp_gunTail >= WP_GUNQUEUE)
+		wp_gunTail++;
+
+	wp_gunQueue[wp_gunHead & (WP_GUNQUEUE-1)].time = time;
+	wp_gunQueue[wp_gunHead & (WP_GUNQUEUE-1)].frame = wp.gunframe;
+	wp_gunQueue[wp_gunHead & (WP_GUNQUEUE-1)].firing = firing;
+	wp_gunHead++;
 }
 
 /*
@@ -837,7 +889,21 @@ CL_WP_RenderFrame
 */
 void CL_WP_RenderFrame (void)
 {
-	// a railgun trail that was held back
+	int			i;
+	wpevent_t	*ev;
+
+	// shots that were held back
+	for (i = 0; i < WP_EVENTS; i++)
+	{
+		ev = &wp_events[i];
+
+		if (ev->showTime && cls.realtime >= ev->showTime)
+		{
+			ev->showTime = 0;
+			CL_MuzzleFlash (cl.playernum + 1, ev->weapon, wp_silenced);
+		}
+	}
+
 	if (wp_railDrawTime && cls.realtime >= wp_railDrawTime)
 	{
 		wp_railDrawTime = 0;
@@ -867,24 +933,44 @@ qboolean CL_WP_GunFrame (int *frame, int *oldframe, float *backlerp)
 	if (!wp.valid || !WP_Allowed () || cls.realtime < wp_suspendTime || cls.realtime < wp_blockTime)
 	{
 		wp_gun.active = false;
+		wp_gunFiring = false;
+		wp_gunTail = wp_gunHead;
 		return false;
 	}
 
 	d = wp.def;
 
-	if (wp.state == WS_FIRING)
+	// frame changes that have become due
+	while (wp_gunTail != wp_gunHead && wp_gunQueue[wp_gunTail & (WP_GUNQUEUE-1)].time <= cls.realtime)
+	{
+		int		i = wp_gunTail & (WP_GUNQUEUE-1);
+
+		if (wp_gunQueue[i].frame != wp_gun.to || !wp_gun.active)
+		{
+			wp_gun.from = wp_gun.active ? wp_gun.to : cl.frame.playerstate.gunframe;
+			wp_gun.to = wp_gunQueue[i].frame;
+			wp_gun.start = wp_gunQueue[i].time;
+		}
+
+		wp_gunFiring = wp_gunQueue[i].firing;
+		if (wp_gunFiring)
+			wp_gun.active = true;
+
+		wp_gunTail++;
+	}
+
+	if (wp_gunFiring)
 	{
 		wp_gun.active = true;
 		wp_gun.holdTime = cls.realtime + (int)wp_rtt + 300;
 	}
 	else if (wp_gun.active)
 	{
-		// the animation is over for us; keep the gun still until the
-		// server's copy of it is over too, or it would play the end twice
+		// the animation is over for us; keep the gun still while the
+		// server's copy of it is still running, or it would play the end twice
 		g = cl.frame.playerstate.gunframe;
 
-		if (wp.state != WS_READY || cls.realtime > wp_gun.holdTime ||
-			(g > d->fireLast && g <= d->idleLast))
+		if (cls.realtime > wp_gun.holdTime || g <= d->activateLast || g > d->fireLast)
 			wp_gun.active = false;
 	}
 
@@ -946,6 +1032,14 @@ qboolean CL_WP_ConfirmShot (int weapon, int silenced)
 
 	wp_events[best].open = false;
 	wp_misses = 0;
+
+	// the server was quicker than our own delayed version: show the server's
+	if (wp_events[best].showTime)
+	{
+		wp_events[best].showTime = 0;
+		return false;
+	}
+
 	return true;
 }
 

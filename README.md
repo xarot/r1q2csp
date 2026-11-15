@@ -193,51 +193,48 @@ noticeable.
 Weapon prediction is part of player prediction: it is in use whenever player
 prediction is (`cl_predict_players 1` and a ping of 100 ms or more), and never
 otherwise, so a normal configuration is not affected. The client then runs the
-same weapon logic as the game itself and shows those things the moment you
-press fire. When the server's own report of the shot arrives, it is recognised
+same weapon logic as the game itself and shows those things ahead of the
+server (how far ahead is explained below). When the server's own report of the
+shot arrives, it is recognised
 and not shown a second time.
 
 To use player prediction without it, set `cl_predict_weapons 0` (menu:
 **Multiplayer > Player prediction > Predict own weapons**; default `1`).
 
-| Shown at once                              | Still comes from the server, one ping later |
+| Shown early                                | Still comes from the server, one ping later |
 |--------------------------------------------|---------------------------------------------|
 | muzzle flash and firing sound              | rockets, grenades, blaster bolts and the BFG ball appearing |
 | the gun's firing and reload animation      | bullet and pellet impacts, blood, explosions |
-| the railgun trail (after a short delay, see below) | the view kick, quad damage sound, chaingun spin sounds |
+| the railgun trail                          | the view kick, quad damage sound, chaingun spin sounds |
 | repeat fire while the button is held       | hand grenades (not predicted at all) |
 
 Projectiles are left to the server on purpose. One drawn at once would have
 to jump backwards when the real one appears, because the real one only leaves
 the gun when your command reaches the server.
 
-### Should the delay be removed, or should it match the lead?
+### How much of the delay is removed
 
-It is removed completely, and that is the right amount. The feedback only
-tells you "you fired now", and that is true the moment you press the button,
-whatever your ping is. It is not connected to how far you have to lead: the
-shot still reaches the server one half of your ping later, and the server
-still decides what it hits. So the ping compensation setting above keeps its
-meaning, and nothing about hitting changes; the game only stops feeling as if
-the trigger were late.
+Not all of it, on purpose. What you see of a shot is held back by the part of
+your ping that is not compensated:
 
-### The railgun trail is held back a little
+    delay = your ping - ping compensation   (never below 0)
 
-The flash, the sound and the gun animation come at once. The railgun trail
-does not: it is held back by the part of your ping that is not compensated,
+That is the same amount you still have to lead by. With a ping of 150 and
+ping compensation at 50, the shot shows 100 ms after the click instead of
+150 ms; with the whole ping compensated it shows at once.
 
-    trail delay = your ping - ping compensation   (never below 0)
-
-which is the same amount you still have to lead by. The reason is that the
-trail shows where the shot went, and the shot is decided when it reaches the
-server. Drawn at once, the trail would pass through a player who, by the time
-the shot arrives, has moved on, and it would look like a hit that did not
+The reason is what the picture means. The shot is decided when it reaches the
+server, and the result (blood, impacts, the other player's pain or death)
+comes back one ping after the click. If the shot were shown at once, you
+would see it fire at the target, then a pause, and only then a hit or a miss.
+You would also see it against players who still have time to move before the
+shot arrives, so a railgun trail could go straight through someone and not
 count. Held back by this amount, the players on screen are where they were
-when the server decided the shot, so the trail goes through the players it
-really went through. With the whole ping compensated there is no delay.
+when the server decided the shot. The trail goes through the players it
+really went through, and the result follows shortly after.
 
-`cl_predict_weapons_raildelay` overrides this: `-1` (default) is automatic,
-`0` draws the trail at once, and any other value is a fixed delay in
+`cl_predict_weapons_delay` overrides this: `-1` (default) is automatic, `0`
+shows every shot at once, and any other value is a fixed delay in
 milliseconds.
 
 ### Limits

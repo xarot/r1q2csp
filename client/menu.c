@@ -552,10 +552,10 @@ static const char *prediction_help[5][4] =
 		"ahead of them. Normally left at 0."
 	},
 	{
-		"Shows your own shot the moment you pull",
-		"the trigger: flash, sound, gun movement",
-		"and railgun trail. Only works together",
-		"with player prediction."
+		"Shows your own shot early instead of a",
+		"full ping late: flash, sound, gun",
+		"movement and railgun trail. Only works",
+		"together with player prediction."
 	}
 };
 
