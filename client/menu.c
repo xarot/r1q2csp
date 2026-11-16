@@ -588,6 +588,65 @@ static const char *prediction_help[PP_MENU_ITEMS][4] =
 	}
 };
 
+//which help text belongs to each item on screen, and which items are on screen
+static int				prediction_slot[PP_MENU_ITEMS];
+static qboolean			prediction_visible[PP_MENU_ITEMS];
+
+/*
+Only the items that do something with the current mode and setup are shown:
+the setup choice outside fixed mode, the weapon sliders with the advanced
+setup, and the ping compensation where it is used (fixed mode, and as the
+minimum in adaptive mode with the advanced setup).
+*/
+static void Prediction_Layout( void )
+{
+	void		*items[PP_MENU_ITEMS];
+	int			i, y, mode;
+	qboolean	advanced;
+
+	items[0] = &s_prediction_enable_box;
+	items[1] = &s_prediction_mode_box;
+	items[2] = &s_prediction_setup_box;
+	items[3] = &s_prediction_maxping_slider;
+	items[4] = &s_prediction_stream_slider;
+	items[5] = &s_prediction_burst_slider;
+	items[6] = &s_prediction_projectile_slider;
+	items[7] = &s_prediction_smooth_slider;
+	items[8] = &s_prediction_weapons_box;
+
+	mode = s_prediction_mode_box.curvalue;
+	advanced = mode != 0 && s_prediction_setup_box.curvalue != 0;
+
+	for (i = 0; i < PP_MENU_ITEMS; i++)
+		prediction_visible[i] = true;
+
+	prediction_visible[2] = mode != 0;
+	prediction_visible[3] = mode == 0 || (mode == 2 && advanced);
+	prediction_visible[4] = prediction_visible[5] = prediction_visible[6] = advanced;
+
+	s_prediction_menu.nitems = 0;
+	y = 0;
+
+	for (i = 0; i < PP_MENU_ITEMS; i++)
+	{
+		if (!prediction_visible[i])
+			continue;
+
+		//a gap above the sliders and above the last two items
+		if (i == 7 || (i >= 3 && i <= 6 && s_prediction_menu.nitems && prediction_slot[s_prediction_menu.nitems - 1] < 3))
+			y += 10;
+
+		((menucommon_s *)items[i])->y = y;
+		y += 10;
+
+		prediction_slot[s_prediction_menu.nitems] = i;
+		Menu_AddItem( &s_prediction_menu, items[i] );
+	}
+
+	if (s_prediction_menu.cursor >= s_prediction_menu.nitems)
+		s_prediction_menu.cursor = s_prediction_menu.nitems - 1;
+}
+
 static void PredictionEnableFunc( void *unused )
 {
 	Cvar_SetValue( "cl_predict_players", (float)s_prediction_enable_box.curvalue );
@@ -596,11 +655,13 @@ static void PredictionEnableFunc( void *unused )
 static void PredictionModeFunc( void *unused )
 {
 	Cvar_SetValue( "cl_predict_players_mode", (float)s_prediction_mode_box.curvalue );
+	Prediction_Layout();
 }
 
 static void PredictionSetupFunc( void *unused )
 {
 	Cvar_SetValue( "cl_predict_players_setup", (float)s_prediction_setup_box.curvalue );
+	Prediction_Layout();
 }
 
 static void PredictionMaxPingFunc( void *unused )
@@ -765,16 +826,7 @@ static void Prediction_MenuInit( void )
 	s_prediction_weapons_box.itemnames		= yesno_names;
 	s_prediction_weapons_box.curvalue		= Cvar_VariableValue( "cl_predict_weapons" ) ? 1 : 0;
 
-	//the order here is the order of prediction_help
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_enable_box );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_mode_box );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_setup_box );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_maxping_slider );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_stream_slider );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_burst_slider );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_projectile_slider );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_smooth_slider );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_weapons_box );
+	Prediction_Layout();
 }
 
 static void Prediction_DrawValue( menuslider_s *s )
@@ -799,19 +851,25 @@ static void Prediction_MenuDraw( void )
 	Menu_AdjustCursor( &s_prediction_menu, 1 );
 	Menu_Draw( &s_prediction_menu );
 
-	Prediction_DrawValue( &s_prediction_maxping_slider );
-	Prediction_DrawValue( &s_prediction_stream_slider );
-	Prediction_DrawValue( &s_prediction_burst_slider );
-	Prediction_DrawValue( &s_prediction_projectile_slider );
+	if (prediction_visible[3])
+		Prediction_DrawValue( &s_prediction_maxping_slider );
+
+	if (prediction_visible[4])
+	{
+		Prediction_DrawValue( &s_prediction_stream_slider );
+		Prediction_DrawValue( &s_prediction_burst_slider );
+		Prediction_DrawValue( &s_prediction_projectile_slider );
+	}
+
 	Prediction_DrawValue( &s_prediction_smooth_slider );
 
-	if (s_prediction_menu.cursor >= 0 && s_prediction_menu.cursor < PP_MENU_ITEMS)
+	if (s_prediction_menu.cursor >= 0 && s_prediction_menu.cursor < s_prediction_menu.nitems)
 	{
 		y = s_prediction_menu.y + 124;
 
 		for (i = 0; i < 4; i++)
 		{
-			const char *line = prediction_help[s_prediction_menu.cursor][i];
+			const char *line = prediction_help[prediction_slot[s_prediction_menu.cursor]][i];
 
 			Menu_DrawStringDark( viddef.width / 2 - (int)strlen( line ) * 4, y + i * 10, line );
 		}
