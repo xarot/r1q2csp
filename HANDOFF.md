@@ -97,10 +97,7 @@ Useful checks with `tools\pplog\shot_stats.awk` and ad-hoc awk:
 
 ## Open items
 
-1. **README is not updated for this branch.** It still describes the 100 ms
-   limit as fixed (sections "What it does", "Fair play", "Weapon prediction")
-   and does not mention modes, setup, the weapon sliders or `minping`, and it
-   still lists fine tuning as a menu item.
+1. README is updated for this branch; check it again if behaviour changes.
 2. Menu: all nine items are always shown. Greying out or hiding the weapon
    sliders outside advanced setup was planned but not done.
 3. Weapon prediction still needs `cl_gun 1` (with `cl_gun 0` an R1Q2 server
@@ -113,5 +110,8 @@ Useful checks with `tools\pplog\shot_stats.awk` and ad-hoc awk:
 5. Ideas discussed, not built: a QuakeWorld-style option (no animation/angle
    interpolation; smoothing 0 already gives most of it); separate railgun
    class; console cvars for the adaptive thresholds.
-6. Owner has not decided whether to push this branch. `master` is at tag
+6. Idea from the owner, not built: pick a recorded log in the menu and have the
+   client work out and apply the best settings from it (an in-client version
+   of what `toolspplogmovement_replay.awk` does on the TRK lines).
+7. Owner has not decided whether to push this branch. `master` is at tag
    `v1.1` (released on GitHub with a zip).
