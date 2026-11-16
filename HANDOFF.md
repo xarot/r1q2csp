@@ -98,8 +98,8 @@ Useful checks with `tools\pplog\shot_stats.awk` and ad-hoc awk:
 ## Open items
 
 1. README is updated for this branch; check it again if behaviour changes.
-2. Menu: all nine items are always shown. Greying out or hiding the weapon
-   sliders outside advanced setup was planned but not done.
+2. Menu: only items that do something are shown (`Prediction_Layout` in
+   `client/menu.c`). Not yet looked at in the game.
 3. Weapon prediction still needs `cl_gun 1` (with `cl_gun 0` an R1Q2 server
    does not send the gun frame). Offered to the owner, not yet asked for:
    keep the gun hidden but still request the frames.
