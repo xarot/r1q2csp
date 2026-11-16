@@ -45,8 +45,8 @@ used to get ahead of players with a good connection:
 - **Nothing changes on the server.** The client sends the same commands as
   any other client, and the server decides every hit exactly as before.
 - **It only makes up for ping.** What you see is roughly what a player with a
-  lower ping sees, and never more than that. Below a ping of 100 ms it does
-  nothing at all, so players who already have a good connection gain nothing.
+  lower ping sees, and never more than that. At a low ping there is little
+  left to make up for, so it changes little there.
 - **It is a forecast, not the truth.** An opponent who changes direction is
   drawn in the wrong place until the next update arrives, so a real low ping
   is still better than a predicted one.
@@ -94,11 +94,11 @@ server updates and runs it forward: along the ground, up and down stairs, with
 gravity while airborne, riding lifts, and stopping at walls. Your ping is
 measured automatically all the time, so nothing has to be entered for it.
 
-Prediction is meant to make up for a high ping, not to give players with a
-good connection something extra. It therefore only works while your measured
-ping is 100 ms or more. Below that, other players are drawn exactly as in
-the normal game, whatever the settings are. (It switches on at 105 ms and off
-again below 100 ms, so that it does not flicker at the limit.)
+Prediction is meant to make up for a high ping. It works at any ping, but
+below about 50 ms there is little to gain. If you want it to stay off on
+servers where your ping is good, set `cl_predict_players_minping` to a ping
+in milliseconds: below that, other players are drawn exactly as in the normal
+game. The default is `0`, no limit.
 
 The forecast can only assume that a player keeps doing what they are doing.
 Someone running or flying in a straight line is drawn in the right place.
@@ -115,10 +115,16 @@ console. They are saved in your config.
 | Menu item             | Cvar                         | Default | Meaning |
 |-----------------------|------------------------------|---------|---------|
 | Predict other players | `cl_predict_players`         | `0`     | `1` turns prediction on. |
+| Mode                  | `cl_predict_players_mode`    | `0`     | `0` fixed, `1` per weapon, `2` adaptive; see [Modes](#modes). |
+| Setup                 | `cl_predict_players_setup`   | `0`     | For modes 1 and 2: `0` easy (values worked out from your ping), `1` advanced (the three weapon settings below). |
 | Ping compensation     | `cl_predict_players_maxping` | `50`    | How many milliseconds of your ping are compensated at most. |
+| Machinegun, chaingun  | `cl_predict_players_stream`  | `-1`    | Advanced setup: compensation while holding these. `-1` is automatic. |
+| Shotguns, railgun     | `cl_predict_players_burst`   | `-1`    | The same for shotgun, super shotgun and railgun. |
+| Projectiles           | `cl_predict_players_projectile` | `-1` | The same for rockets, grenades, blaster, hyperblaster and BFG. |
 | Smoothing             | `cl_predict_players_smooth`  | `30`    | Time in milliseconds over which a correction is blended in. |
-| Fine tuning           | `cl_predict_players_offset`  | `0`     | Milliseconds added to (or, negative, taken from) the measured ping. |
 | Predict own weapons   | `cl_predict_weapons`         | `1`     | Shows your own shots early while player prediction is in use; see [Weapon prediction](#weapon-prediction). |
+| (console only)        | `cl_predict_players_offset`  | `0`     | Fine tuning for fixed mode: milliseconds added to the measured ping. |
+| (console only)        | `cl_predict_players_minping` | `0`     | No prediction below this ping. `0` is no limit. |
 
 **Ping compensation** decides how far ahead the client guesses. The delay of
 the server updates (about 100 ms) is always compensated; on top of that comes
@@ -171,15 +177,61 @@ dodges; high values look smoother, but the model spends more time in the
 wrong place. `0` turns it off. Values much above 60 make players noticeably
 harder to hit.
 
-**Fine tuning** is for the case where a player running in a straight line is
-consistently drawn too far back or too far ahead. Raise it if you still have
-to lead such a player, lower it if your shots pass in front of them. It is
-normally left at 0.
+**Fine tuning** (`cl_predict_players_offset`, console only) is added to the
+measured ping in fixed mode. It only has an effect while your ping plus this
+value is below the ping compensation; above that the compensation limit
+decides. It is also counted into the delay of
+[weapon prediction](#weapon-prediction), so a positive value at a high ping
+only makes your own shots show later. It is normally left at 0.
 
-It only has an effect while your ping plus this value is below the ping
-compensation; above that the compensation limit decides. It is also counted
-into the delay of [weapon prediction](#weapon-prediction), so a positive value
-at a high ping only makes your own shots show later.
+### Modes
+
+The mode decides where the ping compensation comes from.
+
+**Fixed** (`0`, the default) uses the ping compensation setting for every
+weapon and every player, as described above.
+
+**Per weapon** (`1`) takes it from the weapon you are holding. Different
+weapons forgive a wrong forecast differently: a stream of bullets or a spread
+of pellets still connects when the model is a little off, while a rocket's
+flight time means you lead by eye anyway. The weapons are in three groups:
+
+| Group      | Weapons                                         |
+|------------|-------------------------------------------------|
+| Stream     | machinegun, chaingun                            |
+| Burst      | shotgun, super shotgun, railgun                 |
+| Projectile | rockets, grenades, blaster, hyperblaster, BFG   |
+
+**Adaptive** (`2`) also looks at each player. On every server update the
+client checks how well its last forecast for that player came true. A player
+who keeps going where the forecast said (running straight, in the air, on a
+lift) gets the full compensation of the weapon group. A player who is dodging
+gets a low one, so their model stays closer to the truth and you lead them as
+before. An error across your line of fire counts more than one along it,
+because only the first makes a shot miss.
+
+**Setup** chooses the values for modes 1 and 2. *Easy* works them out from
+your ping. *Advanced* uses the three weapon settings; `-1` (shown as "auto"
+in the menu) is the most that makes sense for the group:
+
+|                     | Stream           | Burst     | Projectile             | Dodging player (adaptive)  |
+|---------------------|------------------|-----------|------------------------|----------------------------|
+| Per weapon, easy    | 2/3 of your ping | 2/3       | 1/3                    |                            |
+| Adaptive, easy      | ping + 50 ms     | ping      | ping, at most 100 ms   | 1/3 of your ping           |
+| Advanced, auto      | ping + 50 ms     | ping      | ping, at most 100 ms   | the ping compensation setting |
+
+The extra 50 ms for the stream group is there because the server only fires
+held weapons on its next 100 ms tick.
+
+Things to expect in these modes:
+
+- When you change weapons, other players slide a little as the compensation
+  changes. It takes a fraction of a second.
+- In adaptive mode the lead is not the same for every player. Someone who
+  starts dodging drops back to the low compensation at once and gets the high
+  one back only after moving predictably for a moment.
+- With a weapon the client does not recognise (mods with their own ammo), the
+  fixed setting is used.
 
 ### Why not simply compensate the whole ping?
 
@@ -250,7 +302,7 @@ ping after you pulled the trigger, and at a ping of 150 ms that is clearly
 noticeable.
 
 Weapon prediction is part of player prediction: it is in use whenever player
-prediction is (`cl_predict_players 1` and a ping of 100 ms or more), and never
+prediction is (`cl_predict_players 1`), and never
 otherwise, so a normal configuration is not affected. The client then runs the
 same weapon logic as the game itself and shows those things ahead of the
 server (how far ahead is explained below). When the server's own report of the
@@ -278,7 +330,8 @@ your ping that is not compensated:
     delay = your ping - ping compensation   (never below 0)
 
 That is the same amount you still have to lead by. With the whole ping
-compensated the shot shows at once.
+compensated the shot shows at once. In the per weapon and adaptive
+[modes](#modes) the compensation is the one of the weapon you are holding.
 
 | Your ping | Ping compensation | Shot shows after the click | Normal game |
 |-----------|-------------------|----------------------------|-------------|

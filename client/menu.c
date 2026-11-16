@@ -516,40 +516,69 @@ PLAYER PREDICTION MENU (cl_predict_players*)
 =======================================================================
 */
 #define PP_MENU_STEP	5		//milliseconds per slider notch
+#define PP_MENU_ITEMS	9
 
 static menuframework_s	s_prediction_menu;
 static menulist_s		s_prediction_enable_box;
+static menulist_s		s_prediction_mode_box;
+static menulist_s		s_prediction_setup_box;
 static menuslider_s		s_prediction_maxping_slider;
+static menuslider_s		s_prediction_stream_slider;
+static menuslider_s		s_prediction_burst_slider;
+static menuslider_s		s_prediction_projectile_slider;
 static menuslider_s		s_prediction_smooth_slider;
-static menuslider_s		s_prediction_offset_slider;
 static menulist_s		s_prediction_weapons_box;
 
 //explanation shown under the menu for the item at the cursor
-static const char *prediction_help[5][4] =
+static const char *prediction_help[PP_MENU_ITEMS][4] =
 {
 	{
 		"Draws other players where they will be",
 		"when your shot reaches the server, so",
-		"you lead less. Only works while your",
-		"ping is 100 ms or more."
+		"you lead less. Meant for high pings;",
+		"below about 50 ms there is little gain."
 	},
 	{
-		"How much of your ping is compensated.",
-		"0 = only the server frame delay. Higher",
-		"needs less leading but guesses further",
-		"ahead, so dodging players are missed."
+		"fixed: one compensation for everything.",
+		"per weapon: it follows the weapon you",
+		"hold. adaptive: per weapon, and less",
+		"for players who are dodging."
+	},
+	{
+		"For per weapon and adaptive. easy: a",
+		"balance of lead and accuracy, worked",
+		"out from your ping. advanced: the three",
+		"weapon sliders below are used."
+	},
+	{
+		"How much of your ping is compensated in",
+		"fixed mode. In adaptive mode with the",
+		"advanced setup it is what a dodging",
+		"player gets. Higher guesses further."
+	},
+	{
+		"Advanced setup: compensation while you",
+		"hold the machinegun or chaingun. auto",
+		"is your whole ping plus the 50 ms held",
+		"fire waits for the server."
+	},
+	{
+		"Advanced setup: compensation while you",
+		"hold the shotgun, super shotgun or",
+		"railgun. auto is your whole ping.",
+		""
+	},
+	{
+		"Advanced setup: compensation while you",
+		"hold a weapon that fires projectiles.",
+		"auto is your whole ping, but 100 ms at",
+		"most."
 	},
 	{
 		"Time used to blend out corrections when",
 		"a player changes direction. Low = more",
 		"accurate but jumpier, high = smoother",
 		"but the model lags behind. 0 = off."
-	},
-	{
-		"Added to the measured ping. Raise it if",
-		"you still have to lead a player running",
-		"straight, lower it if your shots land",
-		"ahead of them. Normally left at 0."
 	},
 	{
 		"Shows your own shot early instead of a",
@@ -559,9 +588,80 @@ static const char *prediction_help[5][4] =
 	}
 };
 
+//which help text belongs to each item on screen, and which items are on screen
+static int				prediction_slot[PP_MENU_ITEMS];
+static qboolean			prediction_visible[PP_MENU_ITEMS];
+
+/*
+Only the items that do something with the current mode and setup are shown:
+the setup choice outside fixed mode, the weapon sliders with the advanced
+setup, and the ping compensation where it is used (fixed mode, and as the
+minimum in adaptive mode with the advanced setup).
+*/
+static void Prediction_Layout( void )
+{
+	void		*items[PP_MENU_ITEMS];
+	int			i, y, mode;
+	qboolean	advanced;
+
+	items[0] = &s_prediction_enable_box;
+	items[1] = &s_prediction_mode_box;
+	items[2] = &s_prediction_setup_box;
+	items[3] = &s_prediction_maxping_slider;
+	items[4] = &s_prediction_stream_slider;
+	items[5] = &s_prediction_burst_slider;
+	items[6] = &s_prediction_projectile_slider;
+	items[7] = &s_prediction_smooth_slider;
+	items[8] = &s_prediction_weapons_box;
+
+	mode = s_prediction_mode_box.curvalue;
+	advanced = mode != 0 && s_prediction_setup_box.curvalue != 0;
+
+	for (i = 0; i < PP_MENU_ITEMS; i++)
+		prediction_visible[i] = true;
+
+	prediction_visible[2] = mode != 0;
+	prediction_visible[3] = mode == 0 || (mode == 2 && advanced);
+	prediction_visible[4] = prediction_visible[5] = prediction_visible[6] = advanced;
+
+	s_prediction_menu.nitems = 0;
+	y = 0;
+
+	for (i = 0; i < PP_MENU_ITEMS; i++)
+	{
+		if (!prediction_visible[i])
+			continue;
+
+		//a gap above the sliders and above the last two items
+		if (i == 7 || (i >= 3 && i <= 6 && s_prediction_menu.nitems && prediction_slot[s_prediction_menu.nitems - 1] < 3))
+			y += 10;
+
+		((menucommon_s *)items[i])->y = y;
+		y += 10;
+
+		prediction_slot[s_prediction_menu.nitems] = i;
+		Menu_AddItem( &s_prediction_menu, items[i] );
+	}
+
+	if (s_prediction_menu.cursor >= s_prediction_menu.nitems)
+		s_prediction_menu.cursor = s_prediction_menu.nitems - 1;
+}
+
 static void PredictionEnableFunc( void *unused )
 {
 	Cvar_SetValue( "cl_predict_players", (float)s_prediction_enable_box.curvalue );
+}
+
+static void PredictionModeFunc( void *unused )
+{
+	Cvar_SetValue( "cl_predict_players_mode", (float)s_prediction_mode_box.curvalue );
+	Prediction_Layout();
+}
+
+static void PredictionSetupFunc( void *unused )
+{
+	Cvar_SetValue( "cl_predict_players_setup", (float)s_prediction_setup_box.curvalue );
+	Prediction_Layout();
 }
 
 static void PredictionMaxPingFunc( void *unused )
@@ -574,9 +674,25 @@ static void PredictionSmoothFunc( void *unused )
 	Cvar_SetValue( "cl_predict_players_smooth", s_prediction_smooth_slider.curvalue * PP_MENU_STEP );
 }
 
-static void PredictionOffsetFunc( void *unused )
+//the weapon sliders have one notch below zero that stands for automatic
+static void Prediction_SetWeaponCvar( char *cvar, menuslider_s *s )
 {
-	Cvar_SetValue( "cl_predict_players_offset", s_prediction_offset_slider.curvalue * PP_MENU_STEP );
+	Cvar_SetValue( cvar, s->curvalue < 0 ? -1 : s->curvalue * PP_MENU_STEP );
+}
+
+static void PredictionStreamFunc( void *unused )
+{
+	Prediction_SetWeaponCvar( "cl_predict_players_stream", &s_prediction_stream_slider );
+}
+
+static void PredictionBurstFunc( void *unused )
+{
+	Prediction_SetWeaponCvar( "cl_predict_players_burst", &s_prediction_burst_slider );
+}
+
+static void PredictionProjectileFunc( void *unused )
+{
+	Prediction_SetWeaponCvar( "cl_predict_players_projectile", &s_prediction_projectile_slider );
 }
 
 static void PredictionWeaponsFunc( void *unused )
@@ -588,7 +704,12 @@ static float Prediction_SliderValue( const char *cvar, menuslider_s *s )
 {
 	float	v;
 
-	v = (float)floor( Cvar_VariableValue( cvar ) / PP_MENU_STEP + 0.5f );
+	v = Cvar_VariableValue( cvar );
+
+	if (v < 0 && s->minvalue < 0)
+		return -1;
+
+	v = (float)floor( v / PP_MENU_STEP + 0.5f );
 
 	if (v < s->minvalue)
 		v = s->minvalue;
@@ -596,6 +717,19 @@ static float Prediction_SliderValue( const char *cvar, menuslider_s *s )
 		v = s->maxvalue;
 
 	return v;
+}
+
+static void Prediction_InitWeaponSlider( menuslider_s *s, int y, const char *name, const char *cvar, void (*callback)( void * ) )
+{
+	s->generic.type			= MTYPE_SLIDER;
+	s->generic.x			= 0;
+	s->generic.y			= y;
+	s->generic.name			= name;
+	s->generic.callback		= callback;
+	s->generic.statusbar	= cvar;
+	s->minvalue				= -1;
+	s->maxvalue				= 300 / PP_MENU_STEP;
+	s->curvalue				= Prediction_SliderValue( cvar, s );
 }
 
 static void Prediction_MenuInit( void )
@@ -607,8 +741,25 @@ static void Prediction_MenuInit( void )
 		0
 	};
 
+	static const char *mode_names[] =
+	{
+		"fixed",
+		"per weapon",
+		"adaptive",
+		0
+	};
+
+	static const char *setup_names[] =
+	{
+		"easy",
+		"advanced",
+		0
+	};
+
+	int		v;
+
 	s_prediction_menu.x = viddef.width / 2 + 24;
-	s_prediction_menu.y = viddef.height / 2 - 58;
+	s_prediction_menu.y = viddef.height / 2 - 78;
 	s_prediction_menu.nitems = 0;
 
 	s_prediction_enable_box.generic.type	= MTYPE_SPINCONTROL;
@@ -620,9 +771,31 @@ static void Prediction_MenuInit( void )
 	s_prediction_enable_box.itemnames		= yesno_names;
 	s_prediction_enable_box.curvalue		= Cvar_VariableValue( "cl_predict_players" ) ? 1 : 0;
 
+	v = (int)Cvar_VariableValue( "cl_predict_players_mode" );
+	if (v < 0 || v > 2)
+		v = 0;
+
+	s_prediction_mode_box.generic.type		= MTYPE_SPINCONTROL;
+	s_prediction_mode_box.generic.x			= 0;
+	s_prediction_mode_box.generic.y			= 10;
+	s_prediction_mode_box.generic.name		= "mode";
+	s_prediction_mode_box.generic.callback	= PredictionModeFunc;
+	s_prediction_mode_box.generic.statusbar	= "cl_predict_players_mode";
+	s_prediction_mode_box.itemnames			= mode_names;
+	s_prediction_mode_box.curvalue			= v;
+
+	s_prediction_setup_box.generic.type		= MTYPE_SPINCONTROL;
+	s_prediction_setup_box.generic.x		= 0;
+	s_prediction_setup_box.generic.y		= 20;
+	s_prediction_setup_box.generic.name		= "setup";
+	s_prediction_setup_box.generic.callback	= PredictionSetupFunc;
+	s_prediction_setup_box.generic.statusbar = "cl_predict_players_setup";
+	s_prediction_setup_box.itemnames		= setup_names;
+	s_prediction_setup_box.curvalue			= Cvar_VariableValue( "cl_predict_players_setup" ) ? 1 : 0;
+
 	s_prediction_maxping_slider.generic.type	= MTYPE_SLIDER;
 	s_prediction_maxping_slider.generic.x		= 0;
-	s_prediction_maxping_slider.generic.y		= 20;
+	s_prediction_maxping_slider.generic.y		= 40;
 	s_prediction_maxping_slider.generic.name	= "ping compensation";
 	s_prediction_maxping_slider.generic.callback = PredictionMaxPingFunc;
 	s_prediction_maxping_slider.generic.statusbar = "cl_predict_players_maxping";
@@ -630,9 +803,13 @@ static void Prediction_MenuInit( void )
 	s_prediction_maxping_slider.maxvalue		= 300 / PP_MENU_STEP;
 	s_prediction_maxping_slider.curvalue		= Prediction_SliderValue( "cl_predict_players_maxping", &s_prediction_maxping_slider );
 
+	Prediction_InitWeaponSlider( &s_prediction_stream_slider, 50, "machinegun, chaingun", "cl_predict_players_stream", PredictionStreamFunc );
+	Prediction_InitWeaponSlider( &s_prediction_burst_slider, 60, "shotguns, railgun", "cl_predict_players_burst", PredictionBurstFunc );
+	Prediction_InitWeaponSlider( &s_prediction_projectile_slider, 70, "projectiles", "cl_predict_players_projectile", PredictionProjectileFunc );
+
 	s_prediction_smooth_slider.generic.type	= MTYPE_SLIDER;
 	s_prediction_smooth_slider.generic.x		= 0;
-	s_prediction_smooth_slider.generic.y		= 30;
+	s_prediction_smooth_slider.generic.y		= 90;
 	s_prediction_smooth_slider.generic.name	= "smoothing";
 	s_prediction_smooth_slider.generic.callback = PredictionSmoothFunc;
 	s_prediction_smooth_slider.generic.statusbar = "cl_predict_players_smooth";
@@ -640,30 +817,16 @@ static void Prediction_MenuInit( void )
 	s_prediction_smooth_slider.maxvalue		= 150 / PP_MENU_STEP;
 	s_prediction_smooth_slider.curvalue		= Prediction_SliderValue( "cl_predict_players_smooth", &s_prediction_smooth_slider );
 
-	s_prediction_offset_slider.generic.type	= MTYPE_SLIDER;
-	s_prediction_offset_slider.generic.x		= 0;
-	s_prediction_offset_slider.generic.y		= 40;
-	s_prediction_offset_slider.generic.name	= "fine tuning";
-	s_prediction_offset_slider.generic.callback = PredictionOffsetFunc;
-	s_prediction_offset_slider.generic.statusbar = "cl_predict_players_offset";
-	s_prediction_offset_slider.minvalue		= -50 / PP_MENU_STEP;
-	s_prediction_offset_slider.maxvalue		= 50 / PP_MENU_STEP;
-	s_prediction_offset_slider.curvalue		= Prediction_SliderValue( "cl_predict_players_offset", &s_prediction_offset_slider );
-
 	s_prediction_weapons_box.generic.type	= MTYPE_SPINCONTROL;
 	s_prediction_weapons_box.generic.x		= 0;
-	s_prediction_weapons_box.generic.y		= 60;
+	s_prediction_weapons_box.generic.y		= 100;
 	s_prediction_weapons_box.generic.name	= "predict own weapons";
 	s_prediction_weapons_box.generic.callback = PredictionWeaponsFunc;
 	s_prediction_weapons_box.generic.statusbar = "cl_predict_weapons";
 	s_prediction_weapons_box.itemnames		= yesno_names;
 	s_prediction_weapons_box.curvalue		= Cvar_VariableValue( "cl_predict_weapons" ) ? 1 : 0;
 
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_enable_box );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_maxping_slider );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_smooth_slider );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_offset_slider );
-	Menu_AddItem( &s_prediction_menu, ( void * ) &s_prediction_weapons_box );
+	Prediction_Layout();
 }
 
 static void Prediction_DrawValue( menuslider_s *s )
@@ -671,7 +834,11 @@ static void Prediction_DrawValue( menuslider_s *s )
 	char	buff[16];
 
 	//to the right of the slider (two end caps and ten notches wide)
-	Com_sprintf( buff, sizeof(buff), "%d ms", (int)(s->curvalue * PP_MENU_STEP) );
+	if (s->curvalue < 0)
+		Com_sprintf( buff, sizeof(buff), "auto" );
+	else
+		Com_sprintf( buff, sizeof(buff), "%d ms", (int)(s->curvalue * PP_MENU_STEP) );
+
 	Menu_DrawString( s_prediction_menu.x + s->generic.x + 16 + 13 * 8, s_prediction_menu.y + s->generic.y, buff );
 }
 
@@ -684,17 +851,25 @@ static void Prediction_MenuDraw( void )
 	Menu_AdjustCursor( &s_prediction_menu, 1 );
 	Menu_Draw( &s_prediction_menu );
 
-	Prediction_DrawValue( &s_prediction_maxping_slider );
-	Prediction_DrawValue( &s_prediction_smooth_slider );
-	Prediction_DrawValue( &s_prediction_offset_slider );
+	if (prediction_visible[3])
+		Prediction_DrawValue( &s_prediction_maxping_slider );
 
-	if (s_prediction_menu.cursor >= 0 && s_prediction_menu.cursor < 5)
+	if (prediction_visible[4])
 	{
-		y = s_prediction_menu.y + 84;
+		Prediction_DrawValue( &s_prediction_stream_slider );
+		Prediction_DrawValue( &s_prediction_burst_slider );
+		Prediction_DrawValue( &s_prediction_projectile_slider );
+	}
+
+	Prediction_DrawValue( &s_prediction_smooth_slider );
+
+	if (s_prediction_menu.cursor >= 0 && s_prediction_menu.cursor < s_prediction_menu.nitems)
+	{
+		y = s_prediction_menu.y + 124;
 
 		for (i = 0; i < 4; i++)
 		{
-			const char *line = prediction_help[s_prediction_menu.cursor][i];
+			const char *line = prediction_help[prediction_slot[s_prediction_menu.cursor]][i];
 
 			Menu_DrawStringDark( viddef.width / 2 - (int)strlen( line ) * 4, y + i * 10, line );
 		}

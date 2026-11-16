@@ -351,6 +351,10 @@ static int WP_Delay (void)
 	if (cl_predict_weapons_delay->value >= 0)
 		return (int)cl_predict_weapons_delay->value;
 
+	// per weapon and adaptive modes: what this weapon is compensated by
+	if (CL_PP_WeaponComp (&comp))
+		return comp < wp_rtt ? (int)(wp_rtt - comp) : 0;
+
 	ping = wp_rtt + cl_predict_players_offset->value;
 	if (ping < 0)
 		ping = 0;
