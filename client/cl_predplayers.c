@@ -42,6 +42,7 @@ cvar_t	*cl_predict_players_offset;
 cvar_t	*cl_predict_players_debug;
 cvar_t	*cl_predict_players_log;
 cvar_t	*cl_predict_players_mode;		// 0 fixed, 1 per weapon, 2 adaptive
+cvar_t	*cl_predict_players_minping;		// no prediction below this ping, 0 = no limit
 cvar_t	*cl_predict_players_setup;		// 0 easy, 1 advanced
 cvar_t	*cl_predict_players_stream;		// machinegun, chaingun: ms, -1 = automatic
 cvar_t	*cl_predict_players_burst;		// shotguns, railgun
@@ -82,10 +83,6 @@ static qboolean PP_Enabled (void);
 #define	PP_RTT_SAMPLES		16
 #define	PP_MAX_BMODELS		512
 
-// prediction is there to make up for a high ping, not to give players with a
-// good connection something extra: below this round trip time it stays off
-#define	PP_MIN_PING			100.0f
-#define	PP_MIN_PING_ON		105.0f		// needed to switch on; avoids flicker at the limit
 
 #define	PPF_GROUND			1			// standing on something
 #define	PPF_NOGRAVITY		2			// swimming, on a ladder, hooked, flying...
@@ -289,6 +286,7 @@ void CL_PP_Init (void)
 	cl_predict_players_debug = Cvar_Get ("cl_predict_players_debug", "0", 0);
 	cl_predict_players_log = Cvar_Get ("cl_predict_players_log", "0", 0);
 	cl_predict_players_mode = Cvar_Get ("cl_predict_players_mode", "0", CVAR_ARCHIVE);
+	cl_predict_players_minping = Cvar_Get ("cl_predict_players_minping", "0", CVAR_ARCHIVE);
 	cl_predict_players_setup = Cvar_Get ("cl_predict_players_setup", "0", CVAR_ARCHIVE);
 	cl_predict_players_stream = Cvar_Get ("cl_predict_players_stream", "-1", CVAR_ARCHIVE);
 	cl_predict_players_burst = Cvar_Get ("cl_predict_players_burst", "-1", CVAR_ARCHIVE);
@@ -1003,9 +1001,10 @@ static void PP_UpdateTiming (void)
 			pp_rtt += ((float)best - pp_rtt) * 0.2f;
 	}
 
-	if (!pp_rttCount || pp_rtt < PP_MIN_PING)
+	// optional lower limit for the ping, with some room so it does not flicker
+	if (!pp_rttCount || pp_rtt < cl_predict_players_minping->value)
 		pp_pingOk = false;
-	else if (pp_rtt >= PP_MIN_PING_ON)
+	else if (cl_predict_players_minping->value <= 0 || pp_rtt >= cl_predict_players_minping->value + 5.0f)
 		pp_pingOk = true;
 }
 
@@ -1291,10 +1290,10 @@ static void PP_TrackPlayer (entity_state_t *s)
 	// the raw material for trying out other forecast models afterwards
 	if (pp_logFile)
 	{
-		fprintf (pp_logFile, "TRK f=%d t=%d e=%d o=%.3f %.3f %.3f a=%.1f %.1f anim=%d fl=%d v=%.0f %.0f %.0f\n",
+		fprintf (pp_logFile, "TRK f=%d t=%d e=%d o=%.3f %.3f %.3f a=%.1f %.1f anim=%d fl=%d v=%.0f %.0f %.0f miss=%.1f comp=%.0f\n",
 			cl.frame.serverframe, cls.realtime, s->number,
 			s->origin[0], s->origin[1], s->origin[2], s->angles[0], s->angles[1], s->frame,
-			ns.flags, ns.velocity[0], ns.velocity[1], ns.velocity[2]);
+			ns.flags, ns.velocity[0], ns.velocity[1], ns.velocity[2], p->miss, p->comp);
 	}
 }
 
@@ -1783,7 +1782,8 @@ static void PP_LogOpen (void)
 		"#   confirmed=1        blood or sparks were reported on that player\n"
 		"# ACC     once a second: average error of everything drawn (see cl_predict_players_debug -2)\n"
 		"# TRK     every server frame, every visible player: frame, our clock, entity, origin,\n"
-		"#         angles (pitch yaw), animation frame, ground/no-gravity flags, velocity used\n"
+		"#         angles (pitch yaw), animation frame, ground/no-gravity flags, velocity used,\n"
+		"#         miss of the 100 ms forecast (adaptive mode's measure), compensation in use\n"
 		"# WPN     weapon prediction (t = our clock, f = server frame the weapon state belongs to):\n"
 		"#   PRESS/RELEASE  attack button in a command sent to the server\n"
 		"#   SHOT           a shot predicted: mz weapon, gun frame, ping, delay before it is shown, ammo left\n"
