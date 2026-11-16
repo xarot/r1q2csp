@@ -41,6 +41,11 @@ cvar_t	*cl_predict_players_smooth;
 cvar_t	*cl_predict_players_offset;
 cvar_t	*cl_predict_players_debug;
 cvar_t	*cl_predict_players_log;
+cvar_t	*cl_predict_players_mode;		// 0 fixed, 1 per weapon, 2 adaptive
+cvar_t	*cl_predict_players_setup;		// 0 easy, 1 advanced
+cvar_t	*cl_predict_players_stream;		// machinegun, chaingun: ms, -1 = automatic
+cvar_t	*cl_predict_players_burst;		// shotguns, railgun
+cvar_t	*cl_predict_players_projectile;	// everything that flies
 
 extern cvar_t	*hand;
 
@@ -51,8 +56,20 @@ static FILE	*pp_logFile;
 
 static void PP_LogRecord (int entnum, vec3_t shown, vec3_t raw, vec3_t lerp);
 static void PP_LogFrame (void);
-static float PP_Lead (int servertime);
+static float PP_Lead (int servertime, float comp);
 static qboolean PP_Enabled (void);
+
+// weapon classes for cl_predict_players_mode 1 and 2
+#define	PPW_NONE			0			// unknown weapon: the fixed setting is used
+#define	PPW_STREAM			1			// machinegun, chaingun
+#define	PPW_BURST			2			// shotgun, super shotgun, railgun
+#define	PPW_PROJECTILE		3			// rockets, grenades, cells, blaster
+
+// adaptive mode: how far a 100 ms forecast may miss (units)
+#define	PP_MISS_GOOD		6.0f		// up to this the player counts as predictable
+#define	PP_MISS_BAD			18.0f		// from this on as dodging
+#define	PP_COMP_RISE		250.0f		// ms of compensation gained per second
+#define	PP_COMP_FALL		500.0f		// and lost per second
 
 #define	PP_STEPSIZE			18
 #define	PP_MIN_STEP_NORMAL	0.7f
@@ -115,6 +132,11 @@ typedef struct
 	int			shownTime;
 	qboolean	hasShown;
 	qboolean	fallback;
+
+	// modes 1 and 2
+	float		miss;			// recent miss of 100 ms forecasts, sideways counted in full
+	float		comp;			// ping compensation in use for this player, ms
+	int			compTime;		// 0 = comp not set yet
 
 	// accuracy meter: what was drawn, and for which server time
 	ppsample_t	samples[PP_SAMPLES];
@@ -266,6 +288,11 @@ void CL_PP_Init (void)
 	cl_predict_players_offset = Cvar_Get ("cl_predict_players_offset", "0", CVAR_ARCHIVE);
 	cl_predict_players_debug = Cvar_Get ("cl_predict_players_debug", "0", 0);
 	cl_predict_players_log = Cvar_Get ("cl_predict_players_log", "0", 0);
+	cl_predict_players_mode = Cvar_Get ("cl_predict_players_mode", "0", CVAR_ARCHIVE);
+	cl_predict_players_setup = Cvar_Get ("cl_predict_players_setup", "0", CVAR_ARCHIVE);
+	cl_predict_players_stream = Cvar_Get ("cl_predict_players_stream", "-1", CVAR_ARCHIVE);
+	cl_predict_players_burst = Cvar_Get ("cl_predict_players_burst", "-1", CVAR_ARCHIVE);
+	cl_predict_players_projectile = Cvar_Get ("cl_predict_players_projectile", "-1", CVAR_ARCHIVE);
 
 	CL_PP_Reset ();
 }
@@ -644,10 +671,10 @@ PP_Lead
 How far ahead of the given snapshot time to forecast, in seconds.
 ================
 */
-static float PP_Lead (int servertime)
+static float PP_Lead (int servertime, float comp)
 {
 	double	age;
-	float	interval, rtt, maxrtt;
+	float	interval;
 
 	if (!pp_clockValid)
 		return 0;
@@ -663,6 +690,20 @@ static float PP_Lead (int servertime)
 	else if (age > interval * 2.5)
 		age = interval * 2.5;
 
+	return (float)((age + comp) * 0.001);
+}
+
+/*
+================
+PP_FixedComp
+
+Mode 0: the ping, as far as the compensation setting allows
+================
+*/
+static float PP_FixedComp (void)
+{
+	float	rtt, maxrtt;
+
 	rtt = pp_rtt + cl_predict_players_offset->value;
 	maxrtt = cl_predict_players_maxping->value;
 
@@ -671,7 +712,221 @@ static float PP_Lead (int servertime)
 	if (rtt < 0)
 		rtt = 0;
 
-	return (float)((age + rtt) * 0.001);
+	return rtt;
+}
+
+/*
+================
+PP_WeaponClass
+
+The weapon in our hands, by the ammo it uses. The ammo icon is always
+sent, the gun model is not (cl_gun 0).
+================
+*/
+static int PP_WeaponClass (void)
+{
+	int			icon;
+	const char	*name;
+
+	icon = cl.frame.playerstate.stats[STAT_AMMO_ICON];
+
+	// the blaster uses no ammo
+	if (icon <= 0 || icon >= MAX_IMAGES)
+		return PPW_PROJECTILE;
+
+	name = cl.configstrings[CS_IMAGES + icon];
+
+	if (!Q_stricmp ((char *)name, "a_bullets"))
+		return PPW_STREAM;
+
+	if (!Q_stricmp ((char *)name, "a_shells") || !Q_stricmp ((char *)name, "a_slugs"))
+		return PPW_BURST;
+
+	if (!Q_stricmp ((char *)name, "a_rockets") || !Q_stricmp ((char *)name, "a_grenades") ||
+		!Q_stricmp ((char *)name, "a_cells"))
+		return PPW_PROJECTILE;
+
+	return PPW_NONE;
+}
+
+/*
+================
+PP_CompRange
+
+The ping compensation, in ms, for a player we can forecast badly (min)
+and one we can forecast well (max). Only adaptive mode has a range.
+
+                    stream        burst      projectile
+  per weapon, easy  2/3 ping      2/3 ping   1/3 ping
+  adaptive, easy    ping + 50     ping       ping, 100 at most   (min: 1/3 ping)
+  advanced          the cvars; -1 is the adaptive easy value     (min: maxping)
+
+Held fire only goes off on the server's next frame, hence the 50.
+================
+*/
+static void PP_CompRange (float *min, float *max)
+{
+	int			mode, wclass;
+	float		full, v;
+	qboolean	advanced;
+	cvar_t		*var;
+
+	mode = cl_predict_players_mode->intvalue;
+	wclass = PP_WeaponClass ();
+
+	if (mode < 1 || mode > 2 || wclass == PPW_NONE)
+	{
+		*min = *max = PP_FixedComp ();
+		return;
+	}
+
+	advanced = cl_predict_players_setup->intvalue != 0;
+
+	if (wclass == PPW_STREAM)
+	{
+		var = cl_predict_players_stream;
+		full = pp_rtt + 50.0f;
+	}
+	else if (wclass == PPW_BURST)
+	{
+		var = cl_predict_players_burst;
+		full = pp_rtt;
+	}
+	else
+	{
+		var = cl_predict_players_projectile;
+		full = pp_rtt < 100.0f ? pp_rtt : 100.0f;
+	}
+
+	if (advanced)
+	{
+		v = var->value < 0 ? full : var->value;
+	}
+	else if (mode == 1)
+	{
+		v = pp_rtt * (wclass == PPW_PROJECTILE ? 1.0f / 3.0f : 2.0f / 3.0f);
+	}
+	else
+	{
+		v = full;
+	}
+
+	*max = v;
+
+	if (mode == 1)
+	{
+		*min = v;
+		return;
+	}
+
+	v = advanced ? cl_predict_players_maxping->value : pp_rtt / 3.0f;
+	if (v < 0)
+		v = 0;
+	if (v > *max)
+		v = *max;
+
+	*min = v;
+}
+
+/*
+================
+PP_Confidence
+
+0 for a player whose forecasts keep missing, 1 for one who goes where
+the forecast says.
+================
+*/
+static float PP_Confidence (ppstate_t *p)
+{
+	float	c;
+
+	c = (PP_MISS_BAD - p->miss) / (PP_MISS_BAD - PP_MISS_GOOD);
+
+	if (c < 0)
+		c = 0;
+	else if (c > 1)
+		c = 1;
+
+	return c;
+}
+
+/*
+================
+PP_PlayerComp
+
+The compensation for one player right now. It moves towards its target
+at a limited rate so that a change of weapon or of confidence slides the
+model instead of throwing it.
+================
+*/
+static float PP_PlayerComp (ppstate_t *p)
+{
+	float	min, max, target, step;
+	int		dt;
+
+	PP_CompRange (&min, &max);
+
+	target = min + (max - min) * PP_Confidence (p);
+
+	dt = cls.realtime - p->compTime;
+
+	if (!p->compTime || dt < 0 || dt > 500)
+	{
+		p->comp = target;
+	}
+	else if (target > p->comp)
+	{
+		step = PP_COMP_RISE * dt * 0.001f;
+		p->comp = target - p->comp < step ? target : p->comp + step;
+	}
+	else
+	{
+		step = PP_COMP_FALL * dt * 0.001f;
+		p->comp = p->comp - target < step ? target : p->comp - step;
+	}
+
+	p->compTime = cls.realtime ? cls.realtime : 1;
+
+	return p->comp;
+}
+
+/*
+================
+PP_MeasureMiss
+
+Adaptive mode. A new snapshot is in: how far from it would the previous
+one have put this player? An error across our line of sight makes a shot
+miss, one along it does not, so that counts half.
+================
+*/
+static void PP_MeasureMiss (ppstate_t *p, vec3_t origin)
+{
+	vec3_t	predicted, d, los;
+	float	along, sq, m, len;
+
+	PP_Simulate (&p->snap, 1.0f / cl.settings[SVSET_FPS], predicted);
+	VectorSubtract (predicted, origin, d);
+
+	los[0] = origin[0] - cl.frame.playerstate.pmove.origin[0] * 0.125f;
+	los[1] = origin[1] - cl.frame.playerstate.pmove.origin[1] * 0.125f;
+	los[2] = origin[2] - cl.frame.playerstate.pmove.origin[2] * 0.125f;
+
+	len = VectorLength (los);
+	along = len > 1.0f ? DotProduct (d, los) / len : 0;
+
+	sq = DotProduct (d, d) - along * along;
+	if (sq < 0)
+		sq = 0;
+
+	m = (float)sqrt (sq + 0.25f * along * along);
+	if (m > 40.0f)
+		m = 40.0f;
+
+	// quick to lose trust, slow to regain it
+	if (m > p->miss)
+		p->miss += (m - p->miss) * 0.6f;
+	else
+		p->miss += (m - p->miss) * 0.25f;
 }
 
 static void PP_DecayError (ppstate_t *p)
@@ -1004,6 +1259,12 @@ static void PP_TrackPlayer (entity_state_t *s)
 		}
 	}
 
+	// adaptive mode: how well did the last snapshot forecast this one?
+	if (!fresh && p->tracked && df == 1)
+		PP_MeasureMiss (p, ns.origin);
+	else
+		p->miss = PP_MISS_BAD;
+
 	// shuffle
 	if (!fresh && p->tracked && df == 1)
 	{
@@ -1091,7 +1352,7 @@ qboolean CL_PP_GetOrigin (int entnum, vec3_t lerped, vec3_t out)
 {
 	ppstate_t	*p;
 	vec3_t		raw, oldraw, target, in;
-	float		lead;
+	float		lead, comp;
 	trace_t		tr;
 
 	if (entnum < 1 || entnum > MAX_CLIENTS)
@@ -1142,7 +1403,8 @@ qboolean CL_PP_GetOrigin (int entnum, vec3_t lerped, vec3_t out)
 		return true;
 	}
 
-	lead = PP_Lead (p->snap.servertime);
+	comp = PP_PlayerComp (p);
+	lead = PP_Lead (p->snap.servertime, comp);
 	PP_Simulate (&p->snap, lead, raw);
 
 	if (p->newSnap)
@@ -1158,7 +1420,7 @@ qboolean CL_PP_GetOrigin (int entnum, vec3_t lerped, vec3_t out)
 		else if (p->hasOld && !p->fallback)
 		{
 			// where the old base would put them right now
-			PP_Simulate (&p->oldsnap, PP_Lead (p->oldsnap.servertime), oldraw);
+			PP_Simulate (&p->oldsnap, PP_Lead (p->oldsnap.servertime, comp), oldraw);
 			PP_DecayError (p);
 			VectorAdd (oldraw, p->error, oldraw);
 			VectorSubtract (oldraw, raw, p->error);
@@ -1304,6 +1566,7 @@ typedef struct
 	qboolean	hasView;
 	vec3_t		truth, shown, raw, lerp, velocity;
 	vec3_t		mins, maxs;
+	float		comp, miss;
 	int			flags;
 } pptarget_t;
 
@@ -1314,7 +1577,8 @@ typedef struct
 	qboolean	click, hasEye;
 	vec3_t		eye, eyeAngles;					// what we rendered from
 	vec3_t		srvEye, srvMuzzle, srvAngles;	// what the server fired from
-	float		lead;
+	float		lead, compMin, compMax;
+	int			mode, wclass;
 	int			numTargets;
 	pptarget_t	targets[PP_LOG_TARGETS];
 } ppshot_t;
@@ -1496,6 +1760,9 @@ static void PP_LogOpen (void)
 		"#   click     1 = fired by a fresh button press, 0 = button was held\n"
 		"#   cmdage    ms between sending the command that fired and hearing about the shot\n"
 		"#   predict   cl_predict_players at the time, with rtt / lead / smooth / offset used\n"
+		"#   mode      cl_predict_players_mode; wclass 1 stream, 2 burst, 3 projectile, 0 unknown;\n"
+		"#             comp = ping compensation for a dodging - a predictable target, ms\n"
+		"#             (TGT comp = what that player had, miss = how far its forecasts were off)\n"
 		"#   eye/ang   what the screen was rendered from when that command was made\n"
 		"#   srv_*     what the server fired from: eye, muzzle (hand offset), angles\n"
 		"# TGT     one per other player in the server frame of the shot, nearest to the crosshair first\n"
@@ -1590,10 +1857,11 @@ static void PP_LogFlushShot (void)
 	if (!pp_logFile)
 		return;
 
-	fprintf (pp_logFile, "SHOT t=%d frame=%d mz=%d click=%d cmd=%d cmdage=%d predict=%d rtt=%.0f lead=%.0f smooth=%.0f offset=%.0f async=%d eye=%.1f %.1f %.1f ang=%.2f %.2f srv_eye=%.1f %.1f %.1f srv_muzzle=%.1f %.1f %.1f srv_ang=%.2f %.2f\n",
+	fprintf (pp_logFile, "SHOT t=%d frame=%d mz=%d click=%d cmd=%d cmdage=%d predict=%d rtt=%.0f lead=%.0f smooth=%.0f offset=%.0f async=%d mode=%d wclass=%d comp=%.0f-%.0f eye=%.1f %.1f %.1f ang=%.2f %.2f srv_eye=%.1f %.1f %.1f srv_muzzle=%.1f %.1f %.1f srv_ang=%.2f %.2f\n",
 		sh->realtime, sh->serverframe, sh->weapon, sh->click, sh->cmdnum, sh->cmdage,
 		PP_Enabled () ? 1 : 0, pp_rtt, sh->lead * 1000.0f,
 		cl_predict_players_smooth->value, cl_predict_players_offset->value, cl_async->intvalue,
+		sh->mode, sh->wclass, sh->compMin, sh->compMax,
 		sh->eye[0], sh->eye[1], sh->eye[2], sh->eyeAngles[0], sh->eyeAngles[1],
 		sh->srvEye[0], sh->srvEye[1], sh->srvEye[2],
 		sh->srvMuzzle[0], sh->srvMuzzle[1], sh->srvMuzzle[2],
@@ -1660,11 +1928,11 @@ static void PP_LogFlushShot (void)
 		center[2] = t->truth[2] + (t->mins[2] + t->maxs[2]) * 0.5f;
 		PP_RayOffset (sh->srvMuzzle, sh->srvAngles, center, &dist, &right, &up);
 
-		fprintf (pp_logFile, " TGT ent=%d name=\"%s\" range=%.0f true=%.1f %.1f %.1f vel=%.0f %.0f %.0f flags=%d aim_true=%+.1f %+.1f %s blood=%d sparks=%d",
+		fprintf (pp_logFile, " TGT ent=%d name=\"%s\" range=%.0f true=%.1f %.1f %.1f vel=%.0f %.0f %.0f flags=%d aim_true=%+.1f %+.1f %s blood=%d sparks=%d comp=%.0f miss=%.1f",
 			t->ent, cl.clientinfo[t->ent - 1].name, dist,
 			t->truth[0], t->truth[1], t->truth[2],
 			t->velocity[0], t->velocity[1], t->velocity[2], t->flags,
-			-right, -up, aimTrue[k] ? "HIT" : "MISS", blood[k], sparks[k]);
+			-right, -up, aimTrue[k] ? "HIT" : "MISS", blood[k], sparks[k], t->comp, t->miss);
 
 		if (t->hasView)
 		{
@@ -1821,7 +2089,10 @@ void CL_PP_LogShot (int weapon)
 		FastVectorCopy (eye->angles, sh->eyeAngles);
 	}
 
-	sh->lead = PP_Lead (cl.frame.servertime);
+	PP_CompRange (&sh->compMin, &sh->compMax);
+	sh->lead = PP_Lead (cl.frame.servertime, sh->compMax);
+	sh->mode = cl_predict_players_mode->intvalue;
+	sh->wclass = PP_WeaponClass ();
 
 	for (i = 0; i < cl.frame.num_entities && sh->numTargets < PP_LOG_TARGETS; i++)
 	{
@@ -1859,6 +2130,8 @@ void CL_PP_LogShot (int weapon)
 		{
 			FastVectorCopy (pp_players[s->number - 1].snap.velocity, t->velocity);
 			t->flags = pp_players[s->number - 1].snap.flags;
+			t->comp = pp_players[s->number - 1].comp;
+			t->miss = pp_players[s->number - 1].miss;
 		}
 
 		v = PP_LogFindView (s->number - 1, cmdtime);
@@ -1977,4 +2250,26 @@ void CL_PP_LogLine (const char *text)
 		return;
 
 	fprintf (pp_logFile, "%s\n", text);
+}
+
+/*
+=================
+CL_PP_WeaponComp
+
+Modes 1 and 2: the ping compensation that goes with the weapon in our
+hands, for timing what is shown of our own shots. False in mode 0 and
+with a weapon that has no profile.
+=================
+*/
+qboolean CL_PP_WeaponComp (float *comp)
+{
+	float	min, max;
+	int		mode = cl_predict_players_mode->intvalue;
+
+	if (mode < 1 || mode > 2 || PP_WeaponClass () == PPW_NONE)
+		return false;
+
+	PP_CompRange (&min, &max);
+	*comp = max;
+	return true;
 }

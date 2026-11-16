@@ -828,6 +828,7 @@ qboolean CL_PP_Active (void);
 qboolean CL_PP_CommandTime (double *serverTime, float *rtt);
 void CL_PP_ShotTrace (vec3_t start, vec3_t end, vec3_t out);
 void CL_PP_LogLine (const char *text);
+qboolean CL_PP_WeaponComp (float *comp);
 
 //
 // cl_predweapons.c
