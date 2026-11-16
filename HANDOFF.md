@@ -61,8 +61,8 @@ Compensation in ms (`PP_CompRange`), `ping` being the measured round trip:
   model, so it works with `cl_gun 0`. Unknown icon = fixed mode.
 - Adaptive: on every snapshot `PP_MeasureMiss` checks how far a 100 ms forecast
   from the previous snapshot landed from the new one (errors along our line of
-  sight count half). `PP_Confidence` maps that miss from `PP_MISS_GOOD` (6) to
-  `PP_MISS_BAD` (18) onto 1..0, and `PP_PlayerComp` moves each player's
+  sight count half). `PP_Confidence` maps that miss from `PP_MISS_GOOD` (8) to
+  `PP_MISS_BAD` (20) onto 1..0, and `PP_PlayerComp` moves each player's
   compensation between minimum and maximum at a limited rate
   (`PP_COMP_RISE`/`PP_COMP_FALL`). **These four constants are first guesses.**
 - The weapon feedback delay (`WP_Delay`) follows the weapon's compensation in

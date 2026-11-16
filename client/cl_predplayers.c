@@ -67,8 +67,8 @@ static qboolean PP_Enabled (void);
 #define	PPW_PROJECTILE		3			// rockets, grenades, cells, blaster
 
 // adaptive mode: how far a 100 ms forecast may miss (units)
-#define	PP_MISS_GOOD		6.0f		// up to this the player counts as predictable
-#define	PP_MISS_BAD			18.0f		// from this on as dodging
+#define	PP_MISS_GOOD		8.0f		// up to this the player counts as predictable
+#define	PP_MISS_BAD			20.0f		// from this on as dodging
 #define	PP_COMP_RISE		250.0f		// ms of compensation gained per second
 #define	PP_COMP_FALL		500.0f		// and lost per second
 
